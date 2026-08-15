@@ -78,6 +78,29 @@ describe('KsefClientBuilder', () => {
     expect(result).toBe(builder);
   });
 
+  it('throws ConfigurationError when validateXml is enabled without xsdSchemaPath', () => {
+    expect(() =>
+      new KsefClientBuilder()
+        .mode(Mode.Test)
+        .certificate(FAKE_CERT, 'password')
+        .identifier(VALID_NIP)
+        .validateXml()
+        .build(),
+    ).toThrow(ConfigurationError);
+  });
+
+  it('builds successfully when validateXml is enabled with xsdSchemaPath', () => {
+    const client = new KsefClientBuilder()
+      .mode(Mode.Test)
+      .certificate(FAKE_CERT, 'password')
+      .identifier(VALID_NIP)
+      .validateXml()
+      .xsdSchemaPath('/path/to/FA2.xsd')
+      .build();
+
+    expect(client).toBeInstanceOf(KsefClient);
+  });
+
   it('exposes resource accessors on built client', () => {
     const client = new KsefClientBuilder()
       .mode(Mode.Test)

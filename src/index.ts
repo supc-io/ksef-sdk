@@ -14,7 +14,10 @@ export {
   ServerError,
   ConnectionError,
   ConfigurationError,
+  XsdValidationError,
 } from './errors/index.js';
+
+export type { XsdValidationDetail } from './errors/index.js';
 
 // Types
 export { Mode } from './types/common.js';
@@ -92,6 +95,9 @@ export type {
   UpoParams,
   UpoResult,
 } from './types/export.js';
+
+// Validation
+export { validateXmlAgainstXsd } from './utils/xsd.js';
 
 // HTTP (for custom implementations)
 export type { HttpClient, HttpRequestConfig, HttpResponse } from './http/http-client.js';

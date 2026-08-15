@@ -17,6 +17,8 @@ export class KsefClientBuilder {
   private _timeout = 30000;
   private _maxRetries = 2;
   private _httpClient?: HttpClient;
+  private _validateXml = false;
+  private _xsdSchemaPath?: string;
 
   /**
    * Sets the KSeF environment mode.
@@ -86,6 +88,24 @@ export class KsefClientBuilder {
   }
 
   /**
+   * Enables XSD validation of invoice XML before sending to KSeF.
+   * Requires xmllint CLI (libxml2) to be available in PATH.
+   */
+  validateXml(enabled = true): this {
+    this._validateXml = enabled;
+    return this;
+  }
+
+  /**
+   * Sets the path to the XSD schema file for invoice validation.
+   * Required when validateXml is enabled.
+   */
+  xsdSchemaPath(path: string): this {
+    this._xsdSchemaPath = path;
+    return this;
+  }
+
+  /**
    * Builds the KsefClient. Validates configuration and throws ConfigurationError if invalid.
    */
   build(): KsefClient {
@@ -110,6 +130,12 @@ export class KsefClientBuilder {
       throw new ConfigurationError(`Invalid NIP: ${this._identifier}`);
     }
 
+    if (this._validateXml && !this._xsdSchemaPath) {
+      throw new ConfigurationError(
+        'XSD schema path is required when XML validation is enabled. Use .xsdSchemaPath("/path/to/FA2.xsd").',
+      );
+    }
+
     const config: ClientConfig = {
       mode: this._mode,
       baseUrl: BASE_URLS[this._mode],
@@ -119,6 +145,8 @@ export class KsefClientBuilder {
       timeout: this._timeout,
       maxRetries: this._maxRetries,
       logger: this._logger,
+      validateXml: this._validateXml,
+      xsdSchemaPath: this._xsdSchemaPath,
     };
 
     const innerHttp = this._httpClient ?? new DefaultHttpClient();

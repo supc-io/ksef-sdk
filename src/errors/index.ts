@@ -150,6 +150,21 @@ export class ConfigurationError extends KsefError {
   }
 }
 
+export interface XsdValidationDetail {
+  line: number;
+  message: string;
+}
+
+export class XsdValidationError extends KsefError {
+  readonly details: XsdValidationDetail[];
+
+  constructor(message: string, details: XsdValidationDetail[]) {
+    super(message);
+    this.name = 'XsdValidationError';
+    this.details = details;
+  }
+}
+
 const STATUS_MAP: Record<number, typeof KsefApiError> = {
   401: AuthenticationError,
   403: PermissionDeniedError,

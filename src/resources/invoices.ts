@@ -1,4 +1,5 @@
 import { BaseResource } from './base-resource.js';
+import { validateXmlAgainstXsd } from '../utils/xsd.js';
 import type {
   InvoiceSendParams,
   InvoiceSendResult,
@@ -12,10 +13,19 @@ import type {
 export class InvoicesResource extends BaseResource {
   /**
    * Sends an invoice XML to KSeF.
+   * If XSD validation is enabled in the client config, the XML is validated
+   * against the FA(2) schema before sending.
+   *
    * @param params - The invoice XML and optional request options.
    * @returns The send result with reference numbers.
+   * @throws XsdValidationError if validation is enabled and the XML is invalid.
    */
   async send(params: InvoiceSendParams): Promise<InvoiceSendResult> {
+    if (this.config.validateXml && this.config.xsdSchemaPath) {
+      this.logger?.debug('Validating invoice XML against XSD schema');
+      validateXmlAgainstXsd(params.xml, this.config.xsdSchemaPath);
+    }
+
     return this.requestJson<InvoiceSendResult>('PUT', '/online/Invoice/Send', {
       body: { invoiceBody: { type: 'plain', invoiceBody: params.xml } },
       requestOptions: params.requestOptions,

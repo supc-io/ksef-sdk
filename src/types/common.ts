@@ -31,4 +31,6 @@ export interface ClientConfig {
   timeout: number;
   maxRetries: number;
   logger?: Logger;
+  validateXml?: boolean;
+  xsdSchemaPath?: string;
 }
