@@ -1,15 +1,18 @@
 # Zarządzanie uprawnieniami
 
+> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+
+
 Zarządzanie uprawnieniami (credentials) w kontekście podmiotu KSeF. Wymaga aktywnej sesji.
 
 ## Nadawanie uprawnień
 
 ```typescript
 const result = await client.permissions.grant({
-  contextNip: '1234567890',
+  contextNip: '1234563218',
   credentialsIdentifier: {
     type: 'onip',           // onip | pesel | fingerprint
-    identifier: '0987654321',
+    identifier: '5260250274',
   },
   credentialsRoleList: [
     { roleType: 'invoice_read' },
@@ -25,10 +28,10 @@ console.log(result.processingCode);
 
 ```typescript
 const result = await client.permissions.revoke({
-  contextNip: '1234567890',
+  contextNip: '1234563218',
   credentialsIdentifier: {
     type: 'onip',
-    identifier: '0987654321',
+    identifier: '5260250274',
   },
   credentialsRoleList: [
     { roleType: 'invoice_read' },
@@ -40,7 +43,7 @@ const result = await client.permissions.revoke({
 
 ```typescript
 const result = await client.permissions.query({
-  contextNip: '1234567890',
+  contextNip: '1234563218',
   pageSize: 25,   // Opcjonalne, domyślnie 10
   pageOffset: 0,  // Opcjonalne, domyślnie 0
 });

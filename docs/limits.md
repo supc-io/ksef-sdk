@@ -1,5 +1,8 @@
 # Limity i quoty
 
+> **Status:** ścieżki używane przez ten zasób nie występują ani w specyfikacji API KSeF 1.x, ani 2.0. Zasób zostanie przeprojektowany w ramach migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+
+
 Sprawdzanie limitów API KSeF. Wymaga aktywnej sesji.
 
 ## Limity kontekstu (sesji)
@@ -19,7 +22,7 @@ for (const limit of limits.limitList) {
 
 ```typescript
 const limits = await client.limits.subject({
-  subjectNip: '1234567890',
+  subjectNip: '1234563218',
 });
 
 for (const limit of limits.limitList) {

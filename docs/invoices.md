@@ -1,5 +1,8 @@
 # Faktury
 
+> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+
+
 Operacje na fakturach wymagają aktywnej sesji.
 
 ## Wysyłanie faktury
@@ -63,8 +66,8 @@ for (const invoice of result.invoiceHeaderList) {
 const result = await client.invoices.query({
   subjectType: 'subject1',
   ksefReferenceNumberList: [
-    '1234567890-20250101-ABC123-45',
-    '1234567890-20250102-DEF456-78',
+    '1234563218-20250101-ABC123-45',
+    '1234563218-20250102-DEF456-78',
   ],
 });
 ```
@@ -73,7 +76,7 @@ const result = await client.invoices.query({
 
 ```typescript
 const xml = await client.invoices.download({
-  ksefReferenceNumber: '1234567890-20250101-ABC123-45',
+  ksefReferenceNumber: '1234563218-20250101-ABC123-45',
 });
 
 // xml to string z pełnym XML-em faktury

@@ -1,5 +1,8 @@
 # UPO (Urzędowe Poświadczenie Odbioru)
 
+> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+
+
 UPO to oficjalne potwierdzenie przyjęcia faktury przez KSeF. Pobierasz je po wysłaniu faktury, używając numeru referencyjnego.
 
 ## Użycie
