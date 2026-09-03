@@ -24,10 +24,7 @@ export class KsefClient {
 
   private readonly sessionManager: SessionManager;
 
-  constructor(
-    httpClient: HttpClient,
-    config: ClientConfig,
-  ) {
+  constructor(httpClient: HttpClient, config: ClientConfig) {
     this.sessionManager = new SessionManager();
 
     this.auth = new AuthResource(httpClient, config, this.sessionManager);

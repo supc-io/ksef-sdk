@@ -6,10 +6,8 @@ export class UpoResource extends BaseResource {
    * Gets the UPO (official receipt) for a given reference number.
    */
   async get(params: UpoParams): Promise<UpoResult> {
-    return this.requestJson<UpoResult>(
-      'GET',
-      `/common/Status/${params.referenceNumber}`,
-      { requestOptions: params.requestOptions },
-    );
+    return this.requestJson<UpoResult>('GET', `/common/Status/${params.referenceNumber}`, {
+      requestOptions: params.requestOptions,
+    });
   }
 }

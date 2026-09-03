@@ -12,9 +12,7 @@ export class SessionsResource extends BaseResource {
    * Initialises a KSeF session using certificate-based authentication.
    * Performs the full auth flow and polls until the session is active.
    */
-  async init(options?: {
-    requestOptions?: RequestOptions;
-  }): Promise<SessionInitResult> {
+  async init(options?: { requestOptions?: RequestOptions }): Promise<SessionInitResult> {
     const auth = new AuthResource(this.httpClient, this.config, this.sessionManager);
     const initResult = await auth.initSigned({ requestOptions: options?.requestOptions });
 
@@ -29,8 +27,9 @@ export class SessionsResource extends BaseResource {
 
       if (status.processingCode === 200) {
         // Session is active — extract session token from response
-        const sessionToken = (status as SessionStatusResponse & { sessionToken?: { token?: string } })
-          .sessionToken?.token ?? '';
+        const sessionToken =
+          (status as SessionStatusResponse & { sessionToken?: { token?: string } }).sessionToken
+            ?.token ?? '';
 
         this.sessionManager.setSession(sessionToken, initResult.referenceNumber);
         this.logger?.info('Session is now active');

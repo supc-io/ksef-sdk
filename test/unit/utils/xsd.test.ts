@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as childProcess from 'node:child_process';
 import { XsdValidationError } from '../../../src/errors/index.js';
 
@@ -46,8 +46,8 @@ describe('validateXmlAgainstXsd', () => {
     const xmllintError = Object.assign(new Error('xmllint failed'), {
       status: 3,
       stderr: [
-        '/tmp/ksef-xsd-mock/invoice.xml:5: element Kwota: Schemas validity error : Element \'Kwota\': \'abc\' is not a valid value',
-        '/tmp/ksef-xsd-mock/invoice.xml:10: element NIP: Schemas validity error : Element \'NIP\': Missing child element',
+        "/tmp/ksef-xsd-mock/invoice.xml:5: element Kwota: Schemas validity error : Element 'Kwota': 'abc' is not a valid value",
+        "/tmp/ksef-xsd-mock/invoice.xml:10: element NIP: Schemas validity error : Element 'NIP': Missing child element",
         '/tmp/ksef-xsd-mock/invoice.xml fails to validate',
       ].join('\n'),
     });
@@ -80,8 +80,6 @@ describe('validateXmlAgainstXsd', () => {
       throw xmllintError;
     });
 
-    expect(() => validateXmlAgainstXsd(SAMPLE_XML, SCHEMA_PATH)).toThrow(
-      XsdValidationError,
-    );
+    expect(() => validateXmlAgainstXsd(SAMPLE_XML, SCHEMA_PATH)).toThrow(XsdValidationError);
   });
 });

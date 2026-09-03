@@ -41,11 +41,7 @@ describe('KsefError hierarchy', () => {
     [502, ServerError],
     [503, ServerError],
   ])('fromResponse(%i) returns correct subclass', (status, ErrorClass) => {
-    const err = KsefApiError.fromResponse(
-      status,
-      JSON.stringify({ message: 'test error' }),
-      {},
-    );
+    const err = KsefApiError.fromResponse(status, JSON.stringify({ message: 'test error' }), {});
     expect(err).toBeInstanceOf(ErrorClass);
     expect(err.status).toBe(status);
   });
@@ -53,9 +49,7 @@ describe('KsefError hierarchy', () => {
   it('fromResponse parses KSeF exception format', () => {
     const body = JSON.stringify({
       exception: {
-        exceptionDetailList: [
-          { exceptionCode: 12345, exceptionDescription: 'Session expired' },
-        ],
+        exceptionDetailList: [{ exceptionCode: 12345, exceptionDescription: 'Session expired' }],
       },
       referenceNumber: 'ref-001',
     });

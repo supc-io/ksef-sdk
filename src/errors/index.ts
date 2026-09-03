@@ -27,11 +27,7 @@ export class KsefApiError extends KsefError {
     this.headers = headers;
   }
 
-  static fromResponse(
-    status: number,
-    body: string,
-    headers: Record<string, string>,
-  ): KsefApiError {
+  static fromResponse(status: number, body: string, headers: Record<string, string>): KsefApiError {
     let message = `KSeF API error (${status})`;
     let code: string | null = null;
     let requestId: string | null = null;

@@ -4,8 +4,8 @@ import { DefaultHttpClient } from './http/default-http-client.js';
 import { RetryHttpClient } from './http/retry.js';
 import { ConfigurationError } from './errors/index.js';
 import { validateNip, normalizeNip } from './utils/nip.js';
-import { Mode, BASE_URLS } from './types/common.js';
-import type { Logger, ClientConfig } from './types/common.js';
+import { BASE_URLS } from './types/common.js';
+import type { Logger, ClientConfig, Mode } from './types/common.js';
 import type { HttpClient } from './http/http-client.js';
 
 export class KsefClientBuilder {
@@ -120,9 +120,7 @@ export class KsefClientBuilder {
     }
 
     if (!this._identifier) {
-      throw new ConfigurationError(
-        'Identifier (NIP) is required. Use .identifier("1234567890").',
-      );
+      throw new ConfigurationError('Identifier (NIP) is required. Use .identifier("1234567890").');
     }
 
     const nip = normalizeNip(this._identifier);

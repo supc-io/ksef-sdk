@@ -22,17 +22,17 @@ export function parsePkcs12(p12Base64: string, password: string): ParsedCertific
   try {
     writeFileSync(p12Path, Buffer.from(p12Base64, 'base64'));
 
-    const privateKeyPem = execFileSync('openssl', [
-      'pkcs12', '-in', p12Path,
-      '-nocerts', '-nodes',
-      '-passin', `pass:${password}`,
-    ], { encoding: 'utf-8' });
+    const privateKeyPem = execFileSync(
+      'openssl',
+      ['pkcs12', '-in', p12Path, '-nocerts', '-nodes', '-passin', `pass:${password}`],
+      { encoding: 'utf-8' },
+    );
 
-    const certificatePem = execFileSync('openssl', [
-      'pkcs12', '-in', p12Path,
-      '-nokeys', '-clcerts',
-      '-passin', `pass:${password}`,
-    ], { encoding: 'utf-8' });
+    const certificatePem = execFileSync(
+      'openssl',
+      ['pkcs12', '-in', p12Path, '-nokeys', '-clcerts', '-passin', `pass:${password}`],
+      { encoding: 'utf-8' },
+    );
 
     const keyMatch = privateKeyPem.match(
       /-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA )?PRIVATE KEY-----/,
@@ -49,8 +49,16 @@ export function parsePkcs12(p12Base64: string, password: string): ParsedCertific
       certificatePem: certMatch[0],
     };
   } finally {
-    try { unlinkSync(p12Path); } catch { /* ignore cleanup errors */ }
-    try { unlinkSync(tempDir); } catch { /* ignore */ }
+    try {
+      unlinkSync(p12Path);
+    } catch {
+      /* ignore cleanup errors */
+    }
+    try {
+      unlinkSync(tempDir);
+    } catch {
+      /* ignore */
+    }
   }
 }
 

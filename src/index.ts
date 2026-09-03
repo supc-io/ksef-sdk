@@ -21,16 +21,9 @@ export type { XsdValidationDetail } from './errors/index.js';
 
 // Types
 export { Mode } from './types/common.js';
-export type {
-  RequestOptions,
-  Logger,
-  ClientConfig,
-} from './types/common.js';
+export type { RequestOptions, Logger, ClientConfig } from './types/common.js';
 
-export type {
-  AuthorisationChallengeResponse,
-  InitSignedResponse,
-} from './types/auth.js';
+export type { AuthorisationChallengeResponse, InitSignedResponse } from './types/auth.js';
 
 export type {
   SessionInitResult,

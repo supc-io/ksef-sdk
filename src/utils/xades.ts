@@ -18,7 +18,8 @@ export function signXades(params: XadesSignParams): string {
   const signedPropsId = `xades-${sigId}`;
   const signingTime = new Date().toISOString();
 
-  const xadesSignedProperties = `<xades:SignedProperties Id="${signedPropsId}">` +
+  const xadesSignedProperties =
+    `<xades:SignedProperties Id="${signedPropsId}">` +
     `<xades:SignedSignatureProperties>` +
     `<xades:SigningTime>${signingTime}</xades:SigningTime>` +
     `<xades:SigningCertificate>` +
@@ -41,7 +42,10 @@ export function signXades(params: XadesSignParams): string {
 
   sig.addReference({
     xpath: '/*',
-    transforms: ['http://www.w3.org/2000/09/xmldsig#enveloped-signature', 'http://www.w3.org/2001/10/xml-exc-c14n#'],
+    transforms: [
+      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+      'http://www.w3.org/2001/10/xml-exc-c14n#',
+    ],
     digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
   });
 

@@ -51,8 +51,16 @@ export function validateXmlAgainstXsd(xml: string, xsdPath: string): void {
       );
     }
   } finally {
-    try { unlinkSync(xmlPath); } catch { /* ignore */ }
-    try { unlinkSync(tempDir); } catch { /* ignore */ }
+    try {
+      unlinkSync(xmlPath);
+    } catch {
+      /* ignore */
+    }
+    try {
+      unlinkSync(tempDir);
+    } catch {
+      /* ignore */
+    }
   }
 }
 

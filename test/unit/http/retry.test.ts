@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { RetryHttpClient } from '../../../src/http/retry.js';
 import type { HttpClient, HttpRequestConfig, HttpResponse } from '../../../src/http/http-client.js';
 import { ConnectionError } from '../../../src/errors/index.js';
@@ -60,9 +60,7 @@ describe('RetryHttpClient', () => {
     ]);
     const client = new RetryHttpClient(inner, { maxRetries: 2, baseDelayMs: 1 });
 
-    await expect(client.request({ method: 'GET', url: '/test' })).rejects.toThrow(
-      ConnectionError,
-    );
+    await expect(client.request({ method: 'GET', url: '/test' })).rejects.toThrow(ConnectionError);
   });
 
   it('returns 500 response after retries exhausted', async () => {

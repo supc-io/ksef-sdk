@@ -34,7 +34,10 @@ export class DefaultHttpClient implements HttpClient {
         throw new ConnectionError(`Request timed out after ${timeout}ms`);
       }
       const message = err instanceof Error ? err.message : String(err);
-      throw new ConnectionError(`Network error: ${message}`, err instanceof Error ? err : undefined);
+      throw new ConnectionError(
+        `Network error: ${message}`,
+        err instanceof Error ? err : undefined,
+      );
     } finally {
       clearTimeout(timeoutId);
     }

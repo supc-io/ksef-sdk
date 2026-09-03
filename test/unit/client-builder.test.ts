@@ -21,28 +21,19 @@ describe('KsefClientBuilder', () => {
 
   it('throws ConfigurationError when mode is missing', () => {
     expect(() =>
-      new KsefClientBuilder()
-        .certificate(FAKE_CERT, 'password')
-        .identifier(VALID_NIP)
-        .build(),
+      new KsefClientBuilder().certificate(FAKE_CERT, 'password').identifier(VALID_NIP).build(),
     ).toThrow(ConfigurationError);
   });
 
   it('throws ConfigurationError when certificate is missing', () => {
-    expect(() =>
-      new KsefClientBuilder()
-        .mode(Mode.Test)
-        .identifier(VALID_NIP)
-        .build(),
-    ).toThrow(ConfigurationError);
+    expect(() => new KsefClientBuilder().mode(Mode.Test).identifier(VALID_NIP).build()).toThrow(
+      ConfigurationError,
+    );
   });
 
   it('throws ConfigurationError when identifier is missing', () => {
     expect(() =>
-      new KsefClientBuilder()
-        .mode(Mode.Test)
-        .certificate(FAKE_CERT, 'password')
-        .build(),
+      new KsefClientBuilder().mode(Mode.Test).certificate(FAKE_CERT, 'password').build(),
     ).toThrow(ConfigurationError);
   });
 

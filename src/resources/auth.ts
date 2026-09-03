@@ -37,9 +37,7 @@ export class AuthResource extends BaseResource {
    * 3. Submit InitSigned
    * Returns the reference number for session status polling.
    */
-  async initSigned(options?: {
-    requestOptions?: RequestOptions;
-  }): Promise<InitSignedResponse> {
+  async initSigned(options?: { requestOptions?: RequestOptions }): Promise<InitSignedResponse> {
     this.logger?.info('Starting certificate authentication flow');
 
     // Step 1: Get challenge
@@ -47,10 +45,7 @@ export class AuthResource extends BaseResource {
     this.logger?.debug(`Got challenge: ${challenge.challenge}`);
 
     // Step 2: Parse certificate
-    const parsed = parsePkcs12(
-      this.config.certificateBase64,
-      this.config.certificatePassword,
-    );
+    const parsed = parsePkcs12(this.config.certificateBase64, this.config.certificatePassword);
 
     // Step 3: Generate token
     const token = randomUUID();
