@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@xmldom/xmldom':
-        specifier: 0.8.14
+        specifier: ^0.8.10
         version: 0.8.14
       fast-xml-parser:
         specifier: ^4.5.0
