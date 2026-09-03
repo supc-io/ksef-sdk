@@ -14,6 +14,7 @@ export {
   ServerError,
   ConnectionError,
   ConfigurationError,
+  SessionError,
   XsdValidationError,
 } from './errors/index.js';
 
@@ -23,11 +24,15 @@ export type { XsdValidationDetail } from './errors/index.js';
 export { Mode } from './types/common.js';
 export type { RequestOptions, Logger, ClientConfig } from './types/common.js';
 
-export type { AuthorisationChallengeResponse, InitSignedResponse } from './types/auth.js';
+export type {
+  AuthorisationChallengeRequest,
+  AuthorisationChallengeResponse,
+  InitSignedRequest,
+  InitSignedResponse,
+} from './types/auth.js';
 
 export type {
   SessionInitResult,
-  SessionStatus,
   SessionStatusResponse,
   SessionTerminateResponse,
 } from './types/session.js';
@@ -45,7 +50,10 @@ export type {
 } from './types/invoice.js';
 
 export type {
+  BatchInitParams,
   BatchInitResult,
+  PackagePartSignature,
+  BatchHeaderEntry,
   BatchSendParams,
   BatchSendResult,
   BatchFinishParams,
@@ -55,6 +63,7 @@ export type {
 } from './types/batch.js';
 
 export type {
+  CertificateEnrollParams,
   CertificateEnrollResult,
   CertificateRetrieveParams,
   CertificateRetrieveResult,
@@ -69,12 +78,16 @@ export type {
   PermissionRevokeResult,
   PermissionQueryParams,
   PermissionQueryResult,
+  PermissionCredential,
   CredentialRole,
 } from './types/permission.js';
 
 export type {
+  ContextLimitParams,
   ContextLimitResult,
+  SubjectLimitParams,
   SubjectLimitResult,
+  RateLimitParams,
   RateLimitResult,
   LimitEntry,
 } from './types/limit.js';
@@ -84,6 +97,7 @@ export type {
   ExportInitResult,
   ExportStatusParams,
   ExportStatusResult,
+  ExportPart,
   ExportDownloadParams,
   UpoParams,
   UpoResult,
@@ -93,4 +107,9 @@ export type {
 export { validateXmlAgainstXsd } from './utils/xsd.js';
 
 // HTTP (for custom implementations)
-export type { HttpClient, HttpRequestConfig, HttpResponse } from './http/http-client.js';
+export type {
+  HttpClient,
+  HttpMethod,
+  HttpRequestConfig,
+  HttpResponse,
+} from './http/http-client.js';

@@ -1,8 +1,15 @@
-import type { HttpClient, HttpResponse } from '../http/http-client.js';
+import type { HttpClient, HttpMethod, HttpResponse } from '../http/http-client.js';
 import type { ClientConfig, Logger, RequestOptions } from '../types/common.js';
 import type { SessionManager } from '../session-manager.js';
-import { KsefApiError } from '../errors/index.js';
-import { parseXml } from '../utils/xml.js';
+import { KsefApiError, KsefError } from '../errors/index.js';
+
+interface SendOptions {
+  body?: string | Buffer;
+  contentType?: string;
+  headers?: Record<string, string>;
+  authenticated?: boolean;
+  requestOptions?: RequestOptions;
+}
 
 export abstract class BaseResource {
   constructor(
@@ -19,13 +26,8 @@ export abstract class BaseResource {
     return `${this.config.baseUrl}${path}`;
   }
 
-  protected authHeaders(): Record<string, string> {
-    const token = this.sessionManager.requireToken();
-    return { SessionToken: token };
-  }
-
   protected async requestJson<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: HttpMethod,
     path: string,
     options?: {
       body?: unknown;
@@ -34,82 +36,19 @@ export abstract class BaseResource {
       requestOptions?: RequestOptions;
     },
   ): Promise<T> {
-    const headers: Record<string, string> = {
-      Accept: 'application/json',
-      ...options?.headers,
-    };
-
-    if (options?.authenticated !== false) {
-      Object.assign(headers, this.authHeaders());
-    }
-
-    let bodyStr: string | undefined;
-    if (options?.body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-      bodyStr = JSON.stringify(options.body);
-    }
-
-    const response = await this.httpClient.request({
-      method,
-      url: this.url(path),
-      headers,
-      body: bodyStr,
-      timeout: options?.requestOptions?.timeout ?? this.config.timeout,
-      signal: options?.requestOptions?.signal,
+    const response = await this.dispatch(method, path, {
+      body: options?.body === undefined ? undefined : JSON.stringify(options.body),
+      contentType: 'application/json',
+      headers: { Accept: 'application/json', ...options?.headers },
+      authenticated: options?.authenticated,
+      requestOptions: options?.requestOptions,
     });
 
-    this.logger?.debug(`${method} ${path} -> ${response.status}`);
-
-    if (response.status >= 400) {
-      throw KsefApiError.fromResponse(response.status, response.body, response.headers);
-    }
-
-    return JSON.parse(response.body) as T;
-  }
-
-  protected async requestXml<T>(
-    method: 'GET' | 'POST',
-    path: string,
-    options?: {
-      body?: string;
-      headers?: Record<string, string>;
-      authenticated?: boolean;
-      requestOptions?: RequestOptions;
-    },
-  ): Promise<T> {
-    const headers: Record<string, string> = {
-      Accept: 'application/xml',
-      ...options?.headers,
-    };
-
-    if (options?.authenticated !== false) {
-      Object.assign(headers, this.authHeaders());
-    }
-
-    if (options?.body) {
-      headers['Content-Type'] = 'application/xml';
-    }
-
-    const response = await this.httpClient.request({
-      method,
-      url: this.url(path),
-      headers,
-      body: options?.body,
-      timeout: options?.requestOptions?.timeout ?? this.config.timeout,
-      signal: options?.requestOptions?.signal,
-    });
-
-    this.logger?.debug(`${method} ${path} -> ${response.status}`);
-
-    if (response.status >= 400) {
-      throw KsefApiError.fromResponse(response.status, response.body, response.headers);
-    }
-
-    return parseXml<T>(response.body);
+    return parseJsonBody<T>(response, method, path);
   }
 
   protected async requestRaw(
-    method: 'GET' | 'POST',
+    method: HttpMethod,
     path: string,
     options?: {
       body?: string | Buffer;
@@ -118,27 +57,65 @@ export abstract class BaseResource {
       requestOptions?: RequestOptions;
     },
   ): Promise<HttpResponse> {
-    const headers: Record<string, string> = {
-      ...options?.headers,
-    };
+    return this.dispatch(method, path, options ?? {});
+  }
 
-    if (options?.authenticated !== false) {
-      Object.assign(headers, this.authHeaders());
+  private async dispatch(
+    method: HttpMethod,
+    path: string,
+    options: SendOptions,
+  ): Promise<HttpResponse> {
+    const headers: Record<string, string> = { ...options.headers };
+    const authenticated = options.authenticated !== false;
+
+    if (authenticated) {
+      headers.SessionToken = this.sessionManager.requireToken();
+    }
+
+    if (options.body !== undefined && options.contentType && !hasHeader(headers, 'content-type')) {
+      headers['Content-Type'] = options.contentType;
     }
 
     const response = await this.httpClient.request({
       method,
       url: this.url(path),
       headers,
-      body: options?.body,
-      timeout: options?.requestOptions?.timeout ?? this.config.timeout,
-      signal: options?.requestOptions?.signal,
+      body: options.body,
+      timeout: options.requestOptions?.timeout ?? this.config.timeout,
+      signal: options.requestOptions?.signal,
     });
 
+    this.logger?.debug(`${method} ${path} -> ${response.status}`);
+
     if (response.status >= 400) {
+      if (response.status === 401 && authenticated && this.sessionManager.isActive) {
+        this.sessionManager.clear();
+        this.logger?.warn('KSeF rejected the session token (HTTP 401); local session cleared');
+      }
       throw KsefApiError.fromResponse(response.status, response.body, response.headers);
     }
 
     return response;
+  }
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === lower);
+}
+
+function parseJsonBody<T>(response: HttpResponse, method: HttpMethod, path: string): T {
+  const text = response.body.trim();
+  if (text === '') {
+    return undefined as unknown as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch (err) {
+    throw new KsefError(
+      `KSeF returned a non-JSON response for ${method} ${path} (HTTP ${response.status})`,
+      { cause: err },
+    );
   }
 }

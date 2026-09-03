@@ -1,6 +1,6 @@
 export class KsefError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'KsefError';
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -90,10 +90,15 @@ export class NotFoundError extends KsefApiError {
   }
 }
 
+/**
+ * Thrown for HTTP 400 and 422 responses. KSeF reports invoice and request
+ * validation failures as HTTP 400 with an `exception.exceptionDetailList` body,
+ * so both status codes map here.
+ */
 export class ValidationError extends KsefApiError {
   constructor(
     message: string,
-    status = 422,
+    status = 400,
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
@@ -129,6 +134,10 @@ export class ServerError extends KsefApiError {
   }
 }
 
+/**
+ * Thrown for transport-level failures: timeouts, DNS/connection errors,
+ * caller-initiated aborts and exhausted retries.
+ */
 export class ConnectionError extends KsefError {
   readonly cause?: Error;
 
@@ -139,10 +148,26 @@ export class ConnectionError extends KsefError {
   }
 }
 
+/**
+ * Thrown for problems with the local configuration or environment:
+ * missing builder options, unreadable or unparsable certificates,
+ * missing `openssl` / `xmllint` binaries, invalid XSD schema files.
+ */
 export class ConfigurationError extends KsefError {
   constructor(message: string) {
     super(message);
     this.name = 'ConfigurationError';
+  }
+}
+
+/**
+ * Thrown for session lifecycle problems: calling an authenticated operation
+ * without an active session, or a session initialisation that failed or timed out.
+ */
+export class SessionError extends KsefError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SessionError';
   }
 }
 
@@ -162,6 +187,7 @@ export class XsdValidationError extends KsefError {
 }
 
 const STATUS_MAP: Record<number, typeof KsefApiError> = {
+  400: ValidationError,
   401: AuthenticationError,
   403: PermissionDeniedError,
   404: NotFoundError,

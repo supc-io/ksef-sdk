@@ -47,6 +47,29 @@ describe('KsefClientBuilder', () => {
     ).toThrow(ConfigurationError);
   });
 
+  it('accepts an empty certificate password', () => {
+    const client = new KsefClientBuilder()
+      .mode(Mode.Test)
+      .certificate(FAKE_CERT, '')
+      .identifier(VALID_NIP)
+      .build();
+
+    expect(client).toBeInstanceOf(KsefClient);
+  });
+
+  it('throws ConfigurationError when the certificate file cannot be read', () => {
+    expect(() => new KsefClientBuilder().certificatePath('/nonexistent/cert.p12', 'x')).toThrow(
+      ConfigurationError,
+    );
+  });
+
+  it('rejects negative maxRetries and non-positive timeouts', () => {
+    const valid = () =>
+      new KsefClientBuilder().mode(Mode.Test).certificate(FAKE_CERT, 'p').identifier(VALID_NIP);
+    expect(() => valid().maxRetries(-1).build()).toThrow(ConfigurationError);
+    expect(() => valid().timeout(0).build()).toThrow(ConfigurationError);
+  });
+
   it('accepts NIP with dashes', () => {
     const client = new KsefClientBuilder()
       .mode(Mode.Test)

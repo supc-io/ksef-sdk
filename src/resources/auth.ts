@@ -3,10 +3,13 @@ import type { AuthorisationChallengeResponse, InitSignedResponse } from '../type
 import type { RequestOptions } from '../types/common.js';
 import { signXades } from '../utils/xades.js';
 import { parsePkcs12 } from '../utils/certificate.js';
+import type { ParsedCertificate } from '../utils/certificate.js';
 import { buildXml } from '../utils/xml.js';
 import { randomUUID } from 'node:crypto';
 
 export class AuthResource extends BaseResource {
+  private parsedCertificate?: ParsedCertificate;
+
   /**
    * Requests an authorisation challenge from KSeF.
    * This is the first step of the certificate-based auth flow.
@@ -44,8 +47,8 @@ export class AuthResource extends BaseResource {
     const challenge = await this.getChallenge({ requestOptions: options?.requestOptions });
     this.logger?.debug(`Got challenge: ${challenge.challenge}`);
 
-    // Step 2: Parse certificate
-    const parsed = parsePkcs12(this.config.certificateBase64, this.config.certificatePassword);
+    // Step 2: Parse certificate (cached for the lifetime of the client)
+    const parsed = this.getCertificate();
 
     // Step 3: Generate token
     const token = randomUUID();
@@ -80,6 +83,20 @@ export class AuthResource extends BaseResource {
 
     this.logger?.info(`InitSigned submitted, ref: ${response.referenceNumber}`);
     return response;
+  }
+
+  /**
+   * Parses the configured PKCS#12 certificate once and caches the result,
+   * so repeated session initialisations do not spawn openssl again.
+   */
+  private getCertificate(): ParsedCertificate {
+    if (!this.parsedCertificate) {
+      this.parsedCertificate = parsePkcs12(
+        this.config.certificateBase64,
+        this.config.certificatePassword,
+      );
+    }
+    return this.parsedCertificate;
   }
 }
 

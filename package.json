@@ -51,14 +51,15 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@xmldom/xmldom": "^0.8.10",
     "fast-xml-parser": "^4.5.0",
     "xml-crypto": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "eslint": "^8.56.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.56.0",
     "msw": "^2.6.0",
     "prettier": "^3.2.0",
     "tsup": "^8.0.0",

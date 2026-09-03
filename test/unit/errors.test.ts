@@ -10,6 +10,7 @@ import {
   ServerError,
   ConnectionError,
   ConfigurationError,
+  SessionError,
 } from '../../src/errors/index.js';
 
 describe('KsefError hierarchy', () => {
@@ -32,6 +33,7 @@ describe('KsefError hierarchy', () => {
   });
 
   it.each([
+    [400, ValidationError],
     [401, AuthenticationError],
     [403, PermissionDeniedError],
     [404, NotFoundError],
@@ -71,6 +73,33 @@ describe('KsefError hierarchy', () => {
     const err = new ConnectionError('Network error', cause);
     expect(err).toBeInstanceOf(KsefError);
     expect(err.name).toBe('ConnectionError');
+    expect(err.cause).toBe(cause);
+  });
+
+  it('maps KSeF invoice validation failures (HTTP 400 with exception details) to ValidationError', () => {
+    const body = JSON.stringify({
+      exception: {
+        exceptionDetailList: [
+          { exceptionCode: 21101, exceptionDescription: 'Błąd walidacji faktury' },
+        ],
+      },
+    });
+    const err = KsefApiError.fromResponse(400, body, {});
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.status).toBe(400);
+    expect(err.code).toBe('21101');
+    expect(err.message).toBe('Błąd walidacji faktury');
+  });
+
+  it('SessionError is a KsefError', () => {
+    const err = new SessionError('No active session');
+    expect(err).toBeInstanceOf(KsefError);
+    expect(err.name).toBe('SessionError');
+  });
+
+  it('KsefError carries an optional cause', () => {
+    const cause = new SyntaxError('bad json');
+    const err = new KsefError('wrapped', { cause });
     expect(err.cause).toBe(cause);
   });
 
