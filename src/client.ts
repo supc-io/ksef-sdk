@@ -1,44 +1,55 @@
 import type { HttpClient } from './http/http-client.js';
 import type { ClientConfig } from './types/common.js';
+import type { OpenSessionResult } from './types/session.js';
+import type { ResourceContext } from './resources/base-resource.js';
+import { TokenManager } from './auth/token-manager.js';
 import { SessionManager } from './session-manager.js';
 import { AuthResource } from './resources/auth.js';
+import { SecurityResource } from './resources/security.js';
 import { SessionsResource } from './resources/sessions.js';
-import { BatchResource } from './resources/batch.js';
 import { InvoicesResource } from './resources/invoices.js';
 import { UpoResource } from './resources/upo.js';
-import { ExportsResource } from './resources/exports.js';
-import { CertificatesResource } from './resources/certificates.js';
-import { PermissionsResource } from './resources/permissions.js';
-import { LimitsResource } from './resources/limits.js';
 
 export class KsefClient {
   readonly auth: AuthResource;
+  readonly security: SecurityResource;
   readonly sessions: SessionsResource;
-  readonly batch: BatchResource;
   readonly invoices: InvoicesResource;
   readonly upo: UpoResource;
-  readonly exports: ExportsResource;
-  readonly certificates: CertificatesResource;
-  readonly permissions: PermissionsResource;
-  readonly limits: LimitsResource;
 
+  private readonly tokenManager: TokenManager;
   private readonly sessionManager: SessionManager;
 
   constructor(httpClient: HttpClient, config: ClientConfig) {
+    this.tokenManager = new TokenManager();
     this.sessionManager = new SessionManager();
 
-    this.auth = new AuthResource(httpClient, config, this.sessionManager);
-    this.sessions = new SessionsResource(httpClient, config, this.sessionManager, this.auth);
-    this.batch = new BatchResource(httpClient, config, this.sessionManager);
-    this.invoices = new InvoicesResource(httpClient, config, this.sessionManager);
-    this.upo = new UpoResource(httpClient, config, this.sessionManager);
-    this.exports = new ExportsResource(httpClient, config, this.sessionManager);
-    this.certificates = new CertificatesResource(httpClient, config, this.sessionManager);
-    this.permissions = new PermissionsResource(httpClient, config, this.sessionManager);
-    this.limits = new LimitsResource(httpClient, config, this.sessionManager);
+    const context: ResourceContext = {
+      httpClient,
+      config,
+      tokens: this.tokenManager,
+      session: this.sessionManager,
+    };
+
+    this.auth = new AuthResource(context);
+    context.refresher = this.auth;
+    this.security = new SecurityResource(context);
+    this.sessions = new SessionsResource(context, this.security);
+    this.invoices = new InvoicesResource(context, this.sessions);
+    this.upo = new UpoResource(context);
   }
 
+  /** True once tokens were obtained via `auth.authenticate()` or `auth.useTokens()`. */
+  get isAuthenticated(): boolean {
+    return this.tokenManager.isAuthenticated;
+  }
+
+  /** True while an interactive session opened with `sessions.open()` is tracked. */
   get isSessionActive(): boolean {
     return this.sessionManager.isActive;
+  }
+
+  get currentSession(): OpenSessionResult | null {
+    return this.sessions.current;
   }
 }

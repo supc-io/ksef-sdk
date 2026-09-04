@@ -5,7 +5,7 @@ Biblioteka umożliwia walidację XML faktury przed wysłaniem do KSeF. Walidacja
 ## Wymagania
 
 - **xmllint** CLI (część pakietu libxml2) dostępny w PATH
-- Plik XSD schematu faktury (schematy FA(2) i FA(3) są publikowane przez Ministerstwo Finansów)
+- Plik XSD schematu faktury (schematy FA(2), FA(3) i PEF są publikowane przez Ministerstwo Finansów w [CIRFMF/ksef-api](https://github.com/CIRFMF/ksef-api/tree/main/faktury/schemy))
 
 ```bash
 # macOS (preinstalowany lub via Homebrew)
@@ -26,7 +26,7 @@ const client = new KsefClientBuilder()
   .certificate(cert, password)
   .identifier(nip)
   .validateXml()                        // Włącz walidację
-  .xsdSchemaPath('/path/to/FA2.xsd')   // Ścieżka do schematu XSD
+  .xsdSchemaPath('/path/to/FA3.xsd')   // Ścieżka do schematu XSD
   .build();
 ```
 
@@ -70,7 +70,7 @@ Walidator można użyć niezależnie od klienta:
 import { validateXmlAgainstXsd, XsdValidationError } from '@supcio/ksef-sdk';
 
 try {
-  validateXmlAgainstXsd(xmlString, '/path/to/FA2.xsd');
+  validateXmlAgainstXsd(xmlString, '/path/to/FA3.xsd');
   console.log('XML jest poprawny');
 } catch (error) {
   if (error instanceof XsdValidationError) {

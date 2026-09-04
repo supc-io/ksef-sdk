@@ -1,109 +1,134 @@
 import { BaseResource } from './base-resource.js';
-import type { SessionStatusResponse, SessionTerminateResponse } from '../types/session.js';
-import type { SessionInitResult } from '../types/session.js';
-import type { ClientConfig, RequestOptions } from '../types/common.js';
-import type { HttpClient } from '../http/http-client.js';
-import type { SessionManager } from '../session-manager.js';
-import type { AuthResource } from './auth.js';
-import { SessionError } from '../errors/index.js';
-import { sleep, throwIfAborted } from '../utils/async.js';
+import type { ResourceContext } from './base-resource.js';
+import type { SecurityResource } from './security.js';
+import type {
+  OnlineSession,
+  OpenSessionParams,
+  OpenSessionResult,
+  SessionInvoiceStatus,
+  SessionInvoiceStatusParams,
+  SessionInvoicesParams,
+  SessionInvoicesResponse,
+  SessionReferenceParams,
+  SessionStatusResponse,
+} from '../types/session.js';
+import { encryptRsaOaepSha256, generateSymmetricKey } from '../utils/encryption.js';
 
-const SESSION_POLL_INTERVAL_MS = 2000;
-const SESSION_POLL_MAX_ATTEMPTS = 30;
-
+/**
+ * Interactive (online) sessions: `POST /sessions/online`, `GET /sessions/{ref}`,
+ * `GET /sessions/{ref}/invoices[/{invoiceRef}]`, `POST /sessions/online/{ref}/close`.
+ */
 export class SessionsResource extends BaseResource {
   constructor(
-    httpClient: HttpClient,
-    config: ClientConfig,
-    sessionManager: SessionManager,
-    private readonly auth: AuthResource,
+    context: ResourceContext,
+    private readonly security: SecurityResource,
   ) {
-    super(httpClient, config, sessionManager);
+    super(context);
+  }
+
+  /** The currently open session (without key material), or `null`. */
+  get current(): OpenSessionResult | null {
+    const session = this.context.session.session;
+    if (!session) return null;
+    const { referenceNumber, validUntil, formCode } = session;
+    return { referenceNumber, validUntil, formCode };
   }
 
   /**
-   * Initialises a KSeF session using certificate-based authentication.
-   * Performs the full auth flow and polls until the session is active.
+   * Opens an interactive session. Generates a fresh AES-256 key and IV,
+   * encrypts the key with the Ministry of Finance public key (RSA-OAEP SHA-256)
+   * and remembers the session so that `invoices.send()` can encrypt payloads.
    */
-  async init(options?: { requestOptions?: RequestOptions }): Promise<SessionInitResult> {
-    const signal = options?.requestOptions?.signal;
-    const initResult = await this.auth.initSigned({ requestOptions: options?.requestOptions });
+  async open(params?: OpenSessionParams): Promise<OpenSessionResult> {
+    const formCode = params?.formCode ?? this.config.formCode;
+    const certificate = await this.security.symmetricKeyEncryptionCertificate({
+      requestOptions: params?.requestOptions,
+    });
+    const { key, iv } = generateSymmetricKey();
 
-    this.logger?.info(`Polling session status for ref: ${initResult.referenceNumber}`);
-
-    // Poll for session to become active
-    for (let attempt = 0; attempt < SESSION_POLL_MAX_ATTEMPTS; attempt++) {
-      const status = await this.status({
-        referenceNumber: initResult.referenceNumber,
-        requestOptions: options?.requestOptions,
-      });
-
-      if (status.processingCode === 200) {
-        const sessionToken = (
-          status as SessionStatusResponse & { sessionToken?: { token?: string } }
-        ).sessionToken?.token;
-
-        if (!sessionToken) {
-          throw new SessionError(
-            `KSeF reported session ${initResult.referenceNumber} as active but the status response did not include a session token`,
-          );
-        }
-
-        this.sessionManager.setSession(sessionToken, initResult.referenceNumber);
-        this.logger?.info('Session is now active');
-
-        return {
-          referenceNumber: initResult.referenceNumber,
-          sessionToken,
-        };
-      }
-
-      if (status.processingCode >= 400) {
-        throw new SessionError(
-          `Session init failed: ${status.processingDescription} (code: ${status.processingCode})`,
-        );
-      }
-
-      await sleep(SESSION_POLL_INTERVAL_MS, signal);
-      throwIfAborted(signal);
-    }
-
-    throw new SessionError(
-      `Session init timed out after ${SESSION_POLL_MAX_ATTEMPTS} attempts for ref: ${initResult.referenceNumber}`,
+    const response = await this.requestJson<{ referenceNumber: string; validUntil: string }>(
+      'POST',
+      '/sessions/online',
+      {
+        body: {
+          formCode,
+          encryption: {
+            encryptedSymmetricKey: encryptRsaOaepSha256(key, certificate.certificate).toString(
+              'base64',
+            ),
+            initializationVector: iv.toString('base64'),
+            publicKeyId: certificate.publicKeyId,
+          },
+        },
+        requestOptions: params?.requestOptions,
+      },
     );
+
+    const session: OnlineSession = {
+      referenceNumber: response.referenceNumber,
+      validUntil: response.validUntil,
+      formCode,
+      symmetricKey: key,
+      initializationVector: iv,
+    };
+    this.context.session.setSession(session);
+    this.logger?.info(
+      `Opened session ${session.referenceNumber} (valid until ${session.validUntil})`,
+    );
+
+    return { referenceNumber: session.referenceNumber, validUntil: session.validUntil, formCode };
   }
 
-  /**
-   * Gets the status of a session by reference number.
-   */
-  async status(params: {
-    referenceNumber: string;
-    requestOptions?: RequestOptions;
-  }): Promise<SessionStatusResponse> {
+  /** `GET /sessions/{referenceNumber}` */
+  async status(params?: SessionReferenceParams): Promise<SessionStatusResponse> {
+    const referenceNumber = this.context.session.resolveReferenceNumber(params?.referenceNumber);
     return this.requestJson<SessionStatusResponse>(
       'GET',
-      `/online/Session/Status/${encodeURIComponent(params.referenceNumber)}`,
+      `/sessions/${encodeURIComponent(referenceNumber)}`,
       {
-        authenticated: false,
-        requestOptions: params.requestOptions,
+        requestOptions: params?.requestOptions,
       },
     );
   }
 
-  /**
-   * Terminates the current active session. The local session is cleared on
-   * success and when KSeF reports the token as no longer valid (HTTP 401).
-   */
-  async terminate(options?: {
-    requestOptions?: RequestOptions;
-  }): Promise<SessionTerminateResponse> {
-    const result = await this.requestJson<SessionTerminateResponse>(
+  /** `GET /sessions/{referenceNumber}/invoices` (paged with `x-continuation-token`). */
+  async invoices(params?: SessionInvoicesParams): Promise<SessionInvoicesResponse> {
+    const referenceNumber = this.context.session.resolveReferenceNumber(params?.referenceNumber);
+    return this.requestJson<SessionInvoicesResponse>(
       'GET',
-      '/online/Session/Terminate',
-      { requestOptions: options?.requestOptions },
+      `/sessions/${encodeURIComponent(referenceNumber)}/invoices`,
+      {
+        query: { pageSize: params?.pageSize },
+        headers: params?.continuationToken
+          ? { 'x-continuation-token': params.continuationToken }
+          : undefined,
+        requestOptions: params?.requestOptions,
+      },
     );
-    this.sessionManager.clear();
-    this.logger?.info('Session terminated');
-    return result;
+  }
+
+  /** `GET /sessions/{referenceNumber}/invoices/{invoiceReferenceNumber}` */
+  async invoiceStatus(params: SessionInvoiceStatusParams): Promise<SessionInvoiceStatus> {
+    const referenceNumber = this.context.session.resolveReferenceNumber(params.referenceNumber);
+    return this.requestJson<SessionInvoiceStatus>(
+      'GET',
+      `/sessions/${encodeURIComponent(referenceNumber)}/invoices/${encodeURIComponent(params.invoiceReferenceNumber)}`,
+      { requestOptions: params.requestOptions },
+    );
+  }
+
+  /**
+   * `POST /sessions/online/{referenceNumber}/close`. KSeF then generates the
+   * session UPO asynchronously; poll `status()` until `upo.pages` appears.
+   */
+  async close(params?: SessionReferenceParams): Promise<void> {
+    const referenceNumber = this.context.session.resolveReferenceNumber(params?.referenceNumber);
+    await this.requestRaw('POST', `/sessions/online/${encodeURIComponent(referenceNumber)}/close`, {
+      requestOptions: params?.requestOptions,
+    });
+    if (this.context.session.referenceNumber === referenceNumber) {
+      this.context.session.clear();
+    }
+    this.logger?.info(`Closed session ${referenceNumber}`);
   }
 }

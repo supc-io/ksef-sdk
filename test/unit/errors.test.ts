@@ -91,6 +91,69 @@ describe('KsefError hierarchy', () => {
     expect(err.message).toBe('Błąd walidacji faktury');
   });
 
+  it('fromResponse parses KSeF 2.0 ExceptionResponse with details and reference number', () => {
+    const body = JSON.stringify({
+      exception: {
+        exceptionDetailList: [
+          {
+            exceptionCode: 21301,
+            exceptionDescription: 'Nieprawidłowy skrót',
+            details: ['a', 'b'],
+          },
+        ],
+        referenceNumber: 'ref-2',
+        serviceCode: 'x',
+      },
+    });
+    const err = KsefApiError.fromResponse(400, body, {});
+    expect(err).toBeInstanceOf(ValidationError);
+    expect(err.code).toBe('21301');
+    expect(err.requestId).toBe('ref-2');
+    expect(err.details).toEqual(['a', 'b']);
+  });
+
+  it('fromResponse parses RFC 7807 problem details (401/403/410)', () => {
+    const err = KsefApiError.fromResponse(
+      403,
+      JSON.stringify({
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Brak uprawnień',
+        reasonCode: 'missing-permissions',
+        traceId: 'trace-1',
+      }),
+      {},
+    );
+    expect(err).toBeInstanceOf(PermissionDeniedError);
+    expect(err.message).toBe('Brak uprawnień');
+    expect(err.code).toBe('missing-permissions');
+    expect(err.requestId).toBe('trace-1');
+
+    const titleOnly = KsefApiError.fromResponse(
+      401,
+      JSON.stringify({ title: 'Unauthorized', status: 401 }),
+      {},
+    );
+    expect(titleOnly.message).toBe('Unauthorized');
+  });
+
+  it('fromResponse parses TooManyRequestsResponse', () => {
+    const err = KsefApiError.fromResponse(
+      429,
+      JSON.stringify({
+        status: {
+          code: 429,
+          description: 'Too Many Requests',
+          details: ['Limit 20/min', 'Spróbuj za 30 s'],
+        },
+      }),
+      { 'retry-after': '30' },
+    );
+    expect(err).toBeInstanceOf(RateLimitError);
+    expect(err.message).toBe('Limit 20/min Spróbuj za 30 s');
+    expect(err.details).toHaveLength(2);
+  });
+
   it('SessionError is a KsefError', () => {
     const err = new SessionError('No active session');
     expect(err).toBeInstanceOf(KsefError);

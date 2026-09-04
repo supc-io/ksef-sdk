@@ -11,6 +11,8 @@ export class KsefApiError extends KsefError {
   readonly code: string | null;
   readonly requestId: string | null;
   readonly headers: Record<string, string>;
+  /** Additional detail lines returned by KSeF (`exceptionDetailList[].details`, 429 `status.details`). */
+  readonly details: string[];
 
   constructor(
     message: string,
@@ -18,6 +20,7 @@ export class KsefApiError extends KsefError {
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
+    details: string[] = [],
   ) {
     super(message);
     this.name = 'KsefApiError';
@@ -25,30 +28,59 @@ export class KsefApiError extends KsefError {
     this.code = code;
     this.requestId = requestId;
     this.headers = headers;
+    this.details = details;
   }
 
+  /**
+   * Builds the right error subclass from a KSeF API 2.0 error response.
+   * Understands `ExceptionResponse` (400), RFC 7807 problem details
+   * (401/403/410, `application/problem+json`) and `TooManyRequestsResponse` (429).
+   */
   static fromResponse(status: number, body: string, headers: Record<string, string>): KsefApiError {
     let message = `KSeF API error (${status})`;
     let code: string | null = null;
     let requestId: string | null = null;
+    let details: string[] = [];
 
     try {
       const parsed = JSON.parse(body);
-      if (parsed.exception?.exceptionDetailList?.[0]) {
-        const detail = parsed.exception.exceptionDetailList[0];
-        message = detail.exceptionDescription || message;
-        code = String(detail.exceptionCode ?? '') || null;
+      const exceptionDetail = parsed.exception?.exceptionDetailList?.[0];
+
+      if (exceptionDetail) {
+        message = exceptionDetail.exceptionDescription || message;
+        code =
+          exceptionDetail.exceptionCode !== undefined && exceptionDetail.exceptionCode !== null
+            ? String(exceptionDetail.exceptionCode)
+            : null;
+        details = toStringArray(exceptionDetail.details);
+        requestId = parsed.exception.referenceNumber ?? null;
+      } else if (typeof parsed.detail === 'string' || typeof parsed.title === 'string') {
+        // RFC 7807 problem details
+        message = parsed.detail || parsed.title;
+        code = typeof parsed.reasonCode === 'string' ? parsed.reasonCode : null;
+        requestId = parsed.traceId ?? null;
+      } else if (parsed.status?.description) {
+        // TooManyRequestsResponse
+        details = toStringArray(parsed.status.details);
+        message = details.length > 0 ? details.join(' ') : parsed.status.description;
       } else if (parsed.message) {
         message = parsed.message;
       }
-      requestId = parsed.referenceNumber ?? parsed.requestId ?? null;
+
+      requestId = requestId ?? parsed.referenceNumber ?? parsed.requestId ?? null;
     } catch {
       if (body) message = body.slice(0, 500);
     }
 
     const ErrorClass = STATUS_MAP[status] ?? (status >= 500 ? ServerError : KsefApiError);
-    return new ErrorClass(message, status, code, requestId, headers);
+    return new ErrorClass(message, status, code, requestId, headers, details);
   }
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : [];
 }
 
 export class AuthenticationError extends KsefApiError {
@@ -58,8 +90,9 @@ export class AuthenticationError extends KsefApiError {
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
+    details: string[] = [],
   ) {
-    super(message, status, code, requestId, headers);
+    super(message, status, code, requestId, headers, details);
     this.name = 'AuthenticationError';
   }
 }
@@ -71,8 +104,9 @@ export class PermissionDeniedError extends KsefApiError {
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
+    details: string[] = [],
   ) {
-    super(message, status, code, requestId, headers);
+    super(message, status, code, requestId, headers, details);
     this.name = 'PermissionDeniedError';
   }
 }
@@ -84,8 +118,9 @@ export class NotFoundError extends KsefApiError {
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
+    details: string[] = [],
   ) {
-    super(message, status, code, requestId, headers);
+    super(message, status, code, requestId, headers, details);
     this.name = 'NotFoundError';
   }
 }
@@ -102,8 +137,9 @@ export class ValidationError extends KsefApiError {
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
+    details: string[] = [],
   ) {
-    super(message, status, code, requestId, headers);
+    super(message, status, code, requestId, headers, details);
     this.name = 'ValidationError';
   }
 }
@@ -115,8 +151,9 @@ export class RateLimitError extends KsefApiError {
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
+    details: string[] = [],
   ) {
-    super(message, status, code, requestId, headers);
+    super(message, status, code, requestId, headers, details);
     this.name = 'RateLimitError';
   }
 }
@@ -128,8 +165,9 @@ export class ServerError extends KsefApiError {
     code: string | null = null,
     requestId: string | null = null,
     headers: Record<string, string> = {},
+    details: string[] = [],
   ) {
-    super(message, status, code, requestId, headers);
+    super(message, status, code, requestId, headers, details);
     this.name = 'ServerError';
   }
 }
@@ -161,8 +199,9 @@ export class ConfigurationError extends KsefError {
 }
 
 /**
- * Thrown for session lifecycle problems: calling an authenticated operation
- * without an active session, or a session initialisation that failed or timed out.
+ * Thrown for authentication and session lifecycle problems: calling an
+ * operation without authenticating or without an open session, an
+ * authentication that KSeF rejected, or a status poll that timed out.
  */
 export class SessionError extends KsefError {
   constructor(message: string) {

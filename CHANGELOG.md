@@ -7,24 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - Unreleased
 
-> The network layer currently targets the KSeF 1.x API, which the Ministry of
-> Finance switched off on 2026-02-01. Migration to KSeF API 2.0 is tracked in
-> [#1](https://github.com/supc-io/ksef-sdk/issues/1). Local components (XSD
-> validation, XAdES signing, PKCS#12 parsing, error hierarchy, HTTP retry) are
-> usable today.
+> Targets **KSeF API 2.0** (`https://api{-test,-demo,}.ksef.mf.gov.pl/v2`).
+> Implemented so far: authentication, interactive sessions, invoices, UPO.
+> Batch sessions, exports, permissions, KSeF certificates, limits and KSeF
+> tokens are tracked in [#1](https://github.com/supc-io/ksef-sdk/issues/1).
+> The earlier code targeted the 1.x API switched off on 2026-02-01.
 
 ### Added
 
 - Initial release
-- Certificate-based authentication (PKCS#12 via openssl CLI)
-- Session management (init, terminate, status)
-- Invoice operations (send, query, status, download)
-- Batch operations (init, send, finish, status)
-- UPO retrieval
-- Bulk export (init, status, download)
-- Certificate management (enroll, retrieve, revoke)
-- Permission management (grant, revoke, query)
-- Limits querying (context, subject, rate)
+- KSeF API 2.0 authentication with a PKCS#12 certificate: `POST /auth/challenge`,
+  `AuthTokenRequest` (schema auth v2.0), XAdES-BES, `POST /auth/xades-signature`,
+  status polling, `POST /auth/token/redeem`; automatic access-token refresh
+  (`POST /auth/token/refresh`, shared between concurrent requests, retried once
+  after a 401), `auth.revoke()`, `auth.tokens` / `auth.useTokens()` for
+  persisting tokens between processes, low-level steps for external signers
+- Interactive sessions: `sessions.open()` (AES-256 key + IV generated locally,
+  key encrypted with the MF public key via RSA-OAEP SHA-256, `formCode`
+  defaulting to FA (3)), `status()`, `invoices()` (continuation token),
+  `invoiceStatus()`, `close()`
+- Invoices: `send()` (AES-256-CBC encrypted payload with plain/encrypted SHA-256
+  hashes and sizes, `offlineMode`, `hashOfCorrectedInvoice`), `status()`,
+  `download()` by KSeF number, `query()` (`POST /invoices/query/metadata`)
+- UPO: per session page, per invoice reference number, per KSeF number, and
+  from pre-signed download links
+- `security.publicKeyCertificates()` with a one-hour cache
+- `FormCodes` constants (FA (2), FA (3), PEF (3), PEF_KOR (3), FA_RR (1)),
+  `KsefClientBuilder.formCode()` and `.verifyCertificateChain()`
+- `KsefApiError.details`; parsing of KSeF 2.0 `ExceptionResponse`, RFC 7807
+  problem details (401/403/410, `reasonCode` exposed as `code`) and
+  `TooManyRequestsResponse`
+- Exported crypto helpers: `generateSymmetricKey`, `encryptAes256Cbc`,
+  `decryptAes256Cbc`, `encryptRsaOaepSha256`, `sha256Base64`, `signXades`,
+  `buildAuthTokenRequest`
 - XAdES-BES enveloped signature (RSA-SHA256, Exclusive C14N, signed
   `SignedProperties` with `SigningTime` and `SigningCertificate`)
 - Automatic retry with exponential backoff
@@ -100,6 +115,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- KSeF 1.x resources that have no 2.0 implementation yet: `client.batch`,
+  `client.exports`, `client.certificates`, `client.permissions`,
+  `client.limits`, together with their types and docs (see #1).
+- 1.x session API: `sessions.init()` / `terminate()` / `SessionToken` header,
+  `SessionManager.requireToken()`, `AuthorisationChallengeResponse`,
+  `InitSignedResponse`; `encryptToken()`.
 - `SessionStatus` type (never produced by any method).
 - `fromPem()` helper and the unused `requestXml()` pipeline.
 - Documentation claims that the session token is RSA-OAEP encrypted and that

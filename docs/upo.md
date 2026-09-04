@@ -1,47 +1,67 @@
 # UPO (Urzędowe Poświadczenie Odbioru)
 
-> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+KSeF API 2.0 wystawia UPO dla pojedynczej faktury oraz zbiorcze UPO sesji (po jej zamknięciu). Wszystkie metody zwracają XML jako `string`.
 
-
-UPO to oficjalne potwierdzenie przyjęcia faktury przez KSeF. Pobierasz je po wysłaniu faktury, używając numeru referencyjnego.
-
-## Użycie
+## UPO faktury
 
 ```typescript
-const upo = await client.upo.get({
-  referenceNumber: 'numer-referencyjny',
-});
+// Po numerze referencyjnym faktury w sesji
+const upo = await client.upo.forInvoice({ invoiceReferenceNumber: sent.referenceNumber });
 
-console.log(upo.upo);                    // Treść UPO
-console.log(upo.referenceNumber);
-console.log(upo.processingCode);
-console.log(upo.processingDescription);
+// Po numerze KSeF
+const upo2 = await client.upo.forKsefNumber({ ksefNumber: '1234563218-20260903-ABCDEF012345-01' });
 ```
 
-## Typowy flow
+Domyślnie używana jest bieżąca sesja; dla innej sesji podaj `referenceNumber`.
+
+## UPO sesji
+
+Po `client.sessions.close()` odpytuj status sesji, aż `status.code === 200` i pojawi się `upo.pages`:
 
 ```typescript
-// 1. Wyślij fakturę
-const result = await client.invoices.send({ xml: invoiceXml });
+const status = await client.sessions.status({ referenceNumber: sessionRef });
+for (const page of status.upo?.pages ?? []) {
+  const xml = await client.upo.forSession({
+    referenceNumber: sessionRef,
+    upoReferenceNumber: page.referenceNumber,
+  });
+}
+```
 
-// 2. Pobierz UPO
-const upo = await client.upo.get({
-  referenceNumber: result.referenceNumber,
-});
+## Pobranie z linku
+
+Statusy faktur i sesji zawierają wstępnie podpisane linki (`upoDownloadUrl`, `downloadUrl`). Są publiczne (bez tokena), nie obciążają limitów API i wygasają (`upoDownloadUrlExpirationDate` / `downloadUrlExpirationDate`). Odpowiedź niesie nagłówek `x-ms-meta-hash` ze skrótem SHA-256 dokumentu.
+
+```typescript
+const status = await client.invoices.status({ invoiceReferenceNumber });
+if (status.upoDownloadUrl) {
+  const xml = await client.upo.download({ url: status.upoDownloadUrl });
+}
 ```
 
 ## Typy
 
 ```typescript
-interface UpoParams {
-  referenceNumber: string;
+interface SessionUpoParams {
+  referenceNumber?: string;
+  upoReferenceNumber: string;
   requestOptions?: RequestOptions;
 }
 
-interface UpoResult {
-  upo: string;
-  referenceNumber: string;
-  processingCode: number;
-  processingDescription: string;
+interface InvoiceUpoParams {
+  referenceNumber?: string;
+  invoiceReferenceNumber: string;
+  requestOptions?: RequestOptions;
+}
+
+interface KsefNumberUpoParams {
+  referenceNumber?: string;
+  ksefNumber: string;
+  requestOptions?: RequestOptions;
+}
+
+interface UpoDownloadParams {
+  url: string;
+  requestOptions?: RequestOptions;
 }
 ```

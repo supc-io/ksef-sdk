@@ -1,46 +1,52 @@
 import { describe, it, expect } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { SessionManager } from '../../src/session-manager.js';
 import { SessionError } from '../../src/errors/index.js';
+import { FormCodes } from '../../src/types/common.js';
+
+function session(referenceNumber = 'ref-1', keyLength = 32, ivLength = 16) {
+  return {
+    referenceNumber,
+    validUntil: new Date(Date.now() + 60_000).toISOString(),
+    formCode: FormCodes.FA3,
+    symmetricKey: randomBytes(keyLength),
+    initializationVector: randomBytes(ivLength),
+  };
+}
 
 describe('SessionManager', () => {
-  it('starts with no active session', () => {
+  it('starts with no open session', () => {
     const sm = new SessionManager();
     expect(sm.isActive).toBe(false);
-    expect(sm.sessionToken).toBeNull();
+    expect(sm.session).toBeNull();
     expect(sm.referenceNumber).toBeNull();
+    expect(() => sm.requireSession()).toThrow(SessionError);
+    expect(() => sm.resolveReferenceNumber()).toThrow(SessionError);
   });
 
-  it('setSession activates session', () => {
+  it('stores a session with valid key material', () => {
     const sm = new SessionManager();
-    sm.setSession('token-123', 'ref-001');
+    const s = session();
+    sm.setSession(s);
     expect(sm.isActive).toBe(true);
-    expect(sm.sessionToken).toBe('token-123');
-    expect(sm.referenceNumber).toBe('ref-001');
+    expect(sm.referenceNumber).toBe('ref-1');
+    expect(sm.requireSession()).toBe(s);
+    expect(sm.resolveReferenceNumber()).toBe('ref-1');
+    expect(sm.resolveReferenceNumber('other')).toBe('other');
   });
 
-  it('rejects an empty token so isActive and requireToken never disagree', () => {
+  it('rejects sessions without a reference number or with wrong key sizes', () => {
     const sm = new SessionManager();
-    expect(() => sm.setSession('', 'ref-001')).toThrow(SessionError);
+    expect(() => sm.setSession(session(''))).toThrow(SessionError);
+    expect(() => sm.setSession(session('ref', 16, 16))).toThrow(SessionError);
+    expect(() => sm.setSession(session('ref', 32, 12))).toThrow(SessionError);
     expect(sm.isActive).toBe(false);
   });
 
-  it('clear deactivates session', () => {
+  it('clear() forgets the session', () => {
     const sm = new SessionManager();
-    sm.setSession('token-123', 'ref-001');
+    sm.setSession(session());
     sm.clear();
     expect(sm.isActive).toBe(false);
-    expect(sm.sessionToken).toBeNull();
-  });
-
-  it('requireToken returns token when active', () => {
-    const sm = new SessionManager();
-    sm.setSession('token-123', 'ref-001');
-    expect(sm.requireToken()).toBe('token-123');
-  });
-
-  it('requireToken throws SessionError when no session', () => {
-    const sm = new SessionManager();
-    expect(() => sm.requireToken()).toThrow(SessionError);
-    expect(() => sm.requireToken()).toThrow('No active session');
   });
 });

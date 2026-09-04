@@ -1,141 +1,140 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { InvoicesResource } from '../../../src/resources/invoices.js';
-import { SessionManager } from '../../../src/session-manager.js';
-import { NotFoundError } from '../../../src/errors/index.js';
-import type { HttpClient, HttpRequestConfig, HttpResponse } from '../../../src/http/http-client.js';
-import type { ClientConfig } from '../../../src/types/common.js';
-import { Mode } from '../../../src/types/common.js';
+import { SessionsResource } from '../../../src/resources/sessions.js';
+import { SecurityResource } from '../../../src/resources/security.js';
+import { SessionError, ValidationError } from '../../../src/errors/index.js';
+import { decryptAes256Cbc } from '../../../src/utils/encryption.js';
+import {
+  authenticate,
+  createContext,
+  json,
+  openSession,
+  router,
+  text,
+} from '../../helpers/context.js';
+import type { Handler } from '../../helpers/context.js';
 
-function createMockHttpClient(handler: (config: HttpRequestConfig) => HttpResponse): HttpClient {
-  return {
-    async request(config: HttpRequestConfig): Promise<HttpResponse> {
-      return handler(config);
-    },
-  };
+function build(routes: Record<string, Handler>) {
+  const ctx = createContext(router(routes));
+  authenticate(ctx);
+  const sessions = new SessionsResource(ctx.context, new SecurityResource(ctx.context));
+  const invoices = new InvoicesResource(ctx.context, sessions);
+  return { ctx, invoices };
 }
 
-const baseConfig: ClientConfig = {
-  mode: Mode.Test,
-  baseUrl: 'https://ksef-test.mf.gov.pl/api',
-  identifier: '1234563218',
-  certificateBase64: '',
-  certificatePassword: '',
-  timeout: 30000,
-  maxRetries: 0,
-};
-
 describe('InvoicesResource', () => {
-  let sessionManager: SessionManager;
-
-  beforeEach(() => {
-    sessionManager = new SessionManager();
-    sessionManager.setSession('test-token-123', 'ref-001');
+  it('send() requires an open session', async () => {
+    const { ctx, invoices } = build({});
+    await expect(invoices.send({ xml: '<Faktura/>' })).rejects.toThrow(SessionError);
+    expect(ctx.http.requests).toHaveLength(0);
   });
 
-  it('send() sends invoice and returns result', async () => {
-    const mockResponse = {
-      elementReferenceNumber: 'elem-001',
-      referenceNumber: 'ref-002',
-      processingCode: 200,
-      processingDescription: 'OK',
-      timestamp: '2024-01-01T00:00:00Z',
-    };
+  it('send() encrypts with the open session key and forwards optional fields', async () => {
+    const { ctx, invoices } = build({
+      'POST /sessions/online/sess-1/invoices': () => json(202, { referenceNumber: 'inv-9' }),
+    });
+    const { key, iv } = openSession(ctx, 'sess-1');
 
-    const http = createMockHttpClient((config) => {
-      expect(config.method).toBe('PUT');
-      expect(config.url).toContain('/online/Invoice/Send');
-      expect(config.headers?.SessionToken).toBe('test-token-123');
-      return { status: 200, headers: {}, body: JSON.stringify(mockResponse) };
+    const result = await invoices.send({
+      xml: '<Faktura/>',
+      offlineMode: true,
+      hashOfCorrectedInvoice: 'abc=',
     });
 
-    const invoices = new InvoicesResource(http, baseConfig, sessionManager);
-    const result = await invoices.send({ xml: '<Invoice/>' });
-
-    expect(result.elementReferenceNumber).toBe('elem-001');
-    expect(result.processingCode).toBe(200);
+    expect(result.referenceNumber).toBe('inv-9');
+    expect(result.sessionReferenceNumber).toBe('sess-1');
+    const body = JSON.parse(String(ctx.http.requests[0].body));
+    expect(
+      decryptAes256Cbc(Buffer.from(body.encryptedInvoiceContent, 'base64'), key, iv).toString(),
+    ).toBe('<Faktura/>');
+    expect(body.offlineMode).toBe(true);
+    expect(body.hashOfCorrectedInvoice).toBe('abc=');
   });
 
-  it('status() returns invoice status', async () => {
-    const mockResponse = {
-      processingCode: 200,
-      processingDescription: 'OK',
-      elementReferenceNumber: 'elem-001',
-      invoiceStatus: {
-        invoiceNumber: 'FV/2024/001',
-        ksefReferenceNumber: 'ksef-ref-001',
-        acquisitionTimestamp: '2024-01-01T00:00:00Z',
+  it('send() surfaces KSeF validation errors (400) as ValidationError', async () => {
+    const { ctx, invoices } = build({
+      'POST /sessions/online/sess-1/invoices': () =>
+        json(400, {
+          exception: {
+            exceptionDetailList: [
+              { exceptionCode: 21301, exceptionDescription: 'Nieprawidłowy skrót', details: ['x'] },
+            ],
+            referenceNumber: 'err-ref',
+          },
+        }),
+    });
+    openSession(ctx, 'sess-1');
+
+    const error = await invoices.send({ xml: '<Faktura/>' }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as ValidationError).code).toBe('21301');
+    expect((error as ValidationError).requestId).toBe('err-ref');
+    expect((error as ValidationError).details).toEqual(['x']);
+  });
+
+  it('status() delegates to the session invoice status endpoint', async () => {
+    const { ctx, invoices } = build({
+      'GET /sessions/sess-1/invoices/inv-1': () =>
+        json(200, {
+          ordinalNumber: 1,
+          referenceNumber: 'inv-1',
+          invoiceHash: 'h',
+          invoicingDate: 'd',
+          status: { code: 150, description: 'Trwa przetwarzanie' },
+        }),
+      'GET /sessions/sess-2/invoices/inv-2': () =>
+        json(200, {
+          ordinalNumber: 1,
+          referenceNumber: 'inv-2',
+          invoiceHash: 'h',
+          invoicingDate: 'd',
+          status: { code: 200, description: 'OK' },
+        }),
+    });
+    openSession(ctx, 'sess-1');
+
+    expect((await invoices.status({ invoiceReferenceNumber: 'inv-1' })).status.code).toBe(150);
+    expect(
+      (await invoices.status({ invoiceReferenceNumber: 'inv-2', sessionReferenceNumber: 'sess-2' }))
+        .status.code,
+    ).toBe(200);
+  });
+
+  it('download() returns the invoice XML', async () => {
+    const ksefNumber = '1234563218-20260903-ABCDEF-012345-01';
+    const { ctx, invoices } = build({
+      [`GET /invoices/ksef/${ksefNumber}`]: () => text(200, '<Faktura>x</Faktura>'),
+    });
+
+    await expect(invoices.download({ ksefNumber })).resolves.toBe('<Faktura>x</Faktura>');
+    expect(ctx.http.requests[0].headers?.Accept).toBe('application/xml');
+  });
+
+  it('query() posts filters and puts paging in the query string', async () => {
+    const { ctx, invoices } = build({
+      'POST /invoices/query/metadata': () =>
+        json(200, { hasMore: false, isTruncated: false, invoices: [] }),
+    });
+
+    const result = await invoices.query({
+      filters: {
+        subjectType: 'Subject1',
+        dateRange: { dateType: 'Issue', from: '2026-01-01T00:00:00Z' },
       },
-    };
-
-    const http = createMockHttpClient((config) => {
-      expect(config.method).toBe('GET');
-      expect(config.url).toContain('/online/Invoice/Status/elem-001');
-      return { status: 200, headers: {}, body: JSON.stringify(mockResponse) };
+      pageSize: 50,
+      pageOffset: 2,
+      sortOrder: 'Desc',
     });
 
-    const invoices = new InvoicesResource(http, baseConfig, sessionManager);
-    const result = await invoices.status({ invoiceElementReferenceNumber: 'elem-001' });
-
-    expect(result.invoiceStatus?.invoiceNumber).toBe('FV/2024/001');
-  });
-
-  it('throws NotFoundError on 404', async () => {
-    const http = createMockHttpClient(() => ({
-      status: 404,
-      headers: {},
-      body: JSON.stringify({ message: 'Invoice not found' }),
-    }));
-
-    const invoices = new InvoicesResource(http, baseConfig, sessionManager);
-    await expect(invoices.status({ invoiceElementReferenceNumber: 'nonexistent' })).rejects.toThrow(
-      NotFoundError,
+    expect(result.hasMore).toBe(false);
+    const request = ctx.http.requests[0];
+    expect(request.url).toBe(
+      'https://api-test.ksef.mf.gov.pl/v2/invoices/query/metadata?sortOrder=Desc&pageOffset=2&pageSize=50',
     );
-  });
-
-  it('throws when no session is active', async () => {
-    sessionManager.clear();
-    const http = createMockHttpClient(() => ({ status: 200, headers: {}, body: '{}' }));
-    const invoices = new InvoicesResource(http, baseConfig, sessionManager);
-
-    await expect(invoices.send({ xml: '<Invoice/>' })).rejects.toThrow('No active session');
-  });
-
-  it('query() sends search criteria', async () => {
-    const mockResponse = {
-      referenceNumber: 'ref-003',
-      processingCode: 200,
-      processingDescription: 'OK',
-      numberOfElements: 1,
-      pageSize: 10,
-      pageOffset: 0,
-      invoiceHeaderList: [],
-    };
-
-    const http = createMockHttpClient((config) => {
-      expect(config.method).toBe('POST');
-      expect(config.url).toContain('/online/Query/Invoice/Sync');
-      const body = JSON.parse(config.body as string);
-      expect(body.queryCriteria.subjectType).toBe('subject1');
-      return { status: 200, headers: {}, body: JSON.stringify(mockResponse) };
+    expect(JSON.parse(String(request.body))).toEqual({
+      subjectType: 'Subject1',
+      dateRange: { dateType: 'Issue', from: '2026-01-01T00:00:00Z' },
     });
-
-    const invoices = new InvoicesResource(http, baseConfig, sessionManager);
-    const result = await invoices.query({ subjectType: 'subject1' });
-
-    expect(result.numberOfElements).toBe(1);
-  });
-
-  it('download() returns XML string', async () => {
-    const invoiceXml = '<Invoice><Number>FV/001</Number></Invoice>';
-    const http = createMockHttpClient(() => ({
-      status: 200,
-      headers: {},
-      body: invoiceXml,
-    }));
-
-    const invoices = new InvoicesResource(http, baseConfig, sessionManager);
-    const result = await invoices.download({ ksefReferenceNumber: 'ksef-ref-001' });
-
-    expect(result).toBe(invoiceXml);
   });
 });

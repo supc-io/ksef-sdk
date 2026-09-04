@@ -7,7 +7,7 @@ import { createTestKeyMaterial, hasOpenssl, opensslMajorVersion } from '../../he
 import type { TestKeyMaterial } from '../../helpers/openssl.js';
 
 function ksefTempDirs(): string[] {
-  return readdirSync(tmpdir()).filter((name) => /^ksef-[^x]/.test(name));
+  return readdirSync(tmpdir()).filter((name) => /^ksef-[A-Za-z0-9]{6}$/.test(name));
 }
 
 describe.skipIf(!hasOpenssl())('parsePkcs12', () => {

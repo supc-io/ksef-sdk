@@ -1,161 +1,132 @@
 # Faktury
 
-> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
-
-
-Operacje na fakturach wymagają aktywnej sesji.
+Wysyłka wymaga otwartej sesji interaktywnej (`client.sessions.open()`); pobieranie i wyszukiwanie wymaga tylko uwierzytelnienia i uprawnienia `InvoiceRead`.
 
 ## Wysyłanie faktury
 
 ```typescript
-const result = await client.invoices.send({
-  xml: '<XML faktury zgodny ze schematem FA(2)>',
+const sent = await client.invoices.send({
+  xml: '<Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/">...</Faktura>',
 });
 
-console.log(result.elementReferenceNumber); // Referencja do faktury
-console.log(result.referenceNumber);        // Referencja do requestu
-console.log(result.processingCode);
-console.log(result.processingDescription);
-console.log(result.timestamp);
+console.log(sent.referenceNumber);          // numer referencyjny faktury w sesji
+console.log(sent.sessionReferenceNumber);
+console.log(sent.invoiceHash);              // SHA-256 (base64) jawnego XML
 ```
 
-## Sprawdzanie statusu faktury
+`send()`:
+1. Opcjonalnie waliduje XML schematem XSD (jeśli włączono `validateXml()`).
+2. Szyfruje XML kluczem sesji (AES-256-CBC, PKCS#7).
+3. Wysyła `POST /sessions/online/{ref}/invoices` ze skrótami SHA-256 i rozmiarami wersji jawnej oraz zaszyfrowanej. KSeF odpowiada `202` z numerem referencyjnym; przetwarzanie jest asynchroniczne.
+
+Opcje:
 
 ```typescript
-const status = await client.invoices.status({
-  invoiceElementReferenceNumber: 'element-reference-number',
+await client.invoices.send({
+  xml,
+  offlineMode: true,                       // deklaracja trybu offline
+  hashOfCorrectedInvoice: 'skrót-base64',  // wymagany przy korekcie technicznej
+  requestOptions: { timeout: 60_000 },
 });
+```
 
-console.log(status.processingCode);
-console.log(status.processingDescription);
+## Status faktury
 
-if (status.invoiceStatus) {
-  console.log(status.invoiceStatus.invoiceNumber);        // Numer faktury
-  console.log(status.invoiceStatus.ksefReferenceNumber);   // Numer KSeF
-  console.log(status.invoiceStatus.acquisitionTimestamp);   // Czas przyjęcia
+```typescript
+const status = await client.invoices.status({ invoiceReferenceNumber: sent.referenceNumber });
+
+console.log(status.status.code, status.status.description, status.status.details);
+console.log(status.ksefNumber);             // po nadaniu (kod 200)
+console.log(status.acquisitionDate);        // data nadania numeru KSeF
+console.log(status.permanentStorageDate);   // uzupełniana asynchronicznie
+console.log(status.upoDownloadUrl);         // link do UPO bez tokena, ważny do upoDownloadUrlExpirationDate
+```
+
+| Kod  | Znaczenie                                                   |
+| ---- | ----------------------------------------------------------- |
+| 100  | Faktura przyjęta do dalszego przetwarzania                  |
+| 150  | Trwa przetwarzanie                                          |
+| 200  | Numer KSeF nadany                                           |
+| 4xx  | Faktura odrzucona — przyczyna w `status.description` i `status.details` |
+
+Status faktury z innej sesji: `client.invoices.status({ invoiceReferenceNumber, sessionReferenceNumber })`.
+
+Przykład oczekiwania na numer KSeF:
+
+```typescript
+async function waitForKsefNumber(invoiceReferenceNumber: string, attempts = 30) {
+  for (let i = 0; i < attempts; i++) {
+    const status = await client.invoices.status({ invoiceReferenceNumber });
+    if (status.status.code === 200) return status.ksefNumber!;
+    if (status.status.code >= 400) {
+      throw new Error(`Faktura odrzucona: ${status.status.description} ${status.status.details?.join('; ') ?? ''}`);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error('Przekroczono czas oczekiwania na numer KSeF');
 }
-```
-
-## Wyszukiwanie faktur
-
-```typescript
-const result = await client.invoices.query({
-  subjectType: 'subject1',           // Wymagane: subject1 | subject2 | subject3
-  type: 'incremental',              // Opcjonalne: incremental | range
-  invoicingDateFrom: '2025-01-01',  // Opcjonalne: data od
-  invoicingDateTo: '2025-12-31',    // Opcjonalne: data do
-  pageSize: 25,                     // Opcjonalne: domyślnie 10
-  pageOffset: 0,                    // Opcjonalne: domyślnie 0
-});
-
-console.log(result.numberOfElements);
-console.log(result.invoiceHeaderList); // Lista nagłówków faktur
-
-for (const invoice of result.invoiceHeaderList) {
-  console.log(invoice.ksefReferenceNumber);
-  console.log(invoice.invoicingDate);
-  console.log(invoice.net, invoice.vat, invoice.gross);
-  console.log(invoice.subjectBy);  // Wystawca
-  console.log(invoice.subjectTo);  // Odbiorca
-}
-```
-
-### Wyszukiwanie po numerach KSeF
-
-```typescript
-const result = await client.invoices.query({
-  subjectType: 'subject1',
-  ksefReferenceNumberList: [
-    '1234563218-20250101-ABC123-45',
-    '1234563218-20250102-DEF456-78',
-  ],
-});
 ```
 
 ## Pobieranie XML faktury
 
 ```typescript
 const xml = await client.invoices.download({
-  ksefReferenceNumber: '1234563218-20250101-ABC123-45',
+  ksefNumber: '1234563218-20260903-ABCDEF012345-01',
 });
-
-// xml to string z pełnym XML-em faktury
 ```
 
-## Subject types
+## Wyszukiwanie metadanych
 
-| Wartość    | Opis                           |
-| ---------- | ------------------------------ |
-| `subject1` | Faktury wystawione przez Ciebie |
-| `subject2` | Faktury otrzymane              |
-| `subject3` | Faktury jako inna strona       |
+`POST /invoices/query/metadata`. Zakres dat maksymalnie 100 dni; przy `isTruncated === true` (10 000 rekordów) zawęź `dateRange` od daty ostatniego wyniku i wyzeruj `pageOffset`.
+
+```typescript
+const result = await client.invoices.query({
+  filters: {
+    subjectType: 'Subject1',                       // Subject1 (sprzedawca) | Subject2 (nabywca) | Subject3 | SubjectAuthorized
+    dateRange: { dateType: 'Issue', from: '2026-08-01T00:00:00Z', to: '2026-08-31T23:59:59Z' },
+    invoiceNumber: 'FV/2026/08/001',               // opcjonalne filtry: ksefNumber, sellerNip, buyerIdentifier, amount, currencyCodes, ...
+  },
+  pageSize: 50,                                    // 10..250
+  pageOffset: 0,
+  sortOrder: 'Asc',
+});
+
+console.log(result.hasMore, result.isTruncated);
+for (const invoice of result.invoices) {
+  console.log(invoice.ksefNumber, invoice.invoiceNumber, invoice.grossAmount, invoice.currency);
+}
+```
+
+Do pobierania przyrostowego używaj `dateType: 'PermanentStorage'` i `sortOrder: 'Asc'`; `permanentStorageHwmDate` wyznacza granicę spójnych danych.
 
 ## Typy
 
 ```typescript
 interface InvoiceSendParams {
   xml: string;
+  offlineMode?: boolean;
+  hashOfCorrectedInvoice?: string;
   requestOptions?: RequestOptions;
 }
 
 interface InvoiceSendResult {
-  elementReferenceNumber: string;
   referenceNumber: string;
-  processingCode: number;
-  processingDescription: string;
-  timestamp: string;
+  sessionReferenceNumber: string;
+  invoiceHash: string;
 }
 
-interface InvoiceStatusParams {
-  invoiceElementReferenceNumber: string;
-  requestOptions?: RequestOptions;
-}
-
-interface InvoiceStatusResult {
-  processingCode: number;
-  processingDescription: string;
-  elementReferenceNumber: string;
-  invoiceStatus?: {
-    invoiceNumber: string;
-    ksefReferenceNumber: string;
-    acquisitionTimestamp: string;
-  };
-}
-
-interface InvoiceQueryParams {
-  subjectType: 'subject1' | 'subject2' | 'subject3';
-  type?: 'incremental' | 'range';
-  invoicingDateFrom?: string;
-  invoicingDateTo?: string;
-  ksefReferenceNumberList?: string[];
-  pageSize?: number;
-  pageOffset?: number;
-  requestOptions?: RequestOptions;
-}
-
-interface InvoiceQueryResult {
+interface SessionInvoiceStatus {
+  ordinalNumber: number;
+  invoiceNumber?: string | null;
+  ksefNumber?: string | null;
   referenceNumber: string;
-  processingCode: number;
-  processingDescription: string;
-  numberOfElements: number;
-  pageSize: number;
-  pageOffset: number;
-  invoiceHeaderList: InvoiceHeader[];
-}
-
-interface InvoiceHeader {
-  invoiceReferenceNumber: string;
-  ksefReferenceNumber: string;
-  invoiceHash?: {
-    hashSHA: { algorithm: string; encoding: string; value: string };
-    fileSize: number;
-  };
+  invoiceHash: string;
+  acquisitionDate?: string | null;
   invoicingDate: string;
-  acquisitionTimestamp: string;
-  net?: string;
-  vat?: string;
-  gross?: string;
-  subjectBy: InvoiceSubject;
-  subjectTo?: InvoiceSubject;
+  permanentStorageDate?: string | null;
+  upoDownloadUrl?: string | null;
+  upoDownloadUrlExpirationDate?: string | null;
+  invoicingMode?: 'Online' | 'Offline' | null;
+  status: { code: number; description: string; details?: string[] | null; extensions?: Record<string, string | null> | null };
 }
 ```
