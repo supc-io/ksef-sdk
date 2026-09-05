@@ -1,94 +1,250 @@
 import { BaseResource } from './base-resource.js';
-import type { AuthorisationChallengeResponse, InitSignedResponse } from '../types/auth.js';
+import type { ResourceContext, TokenRefresher } from './base-resource.js';
+import type {
+  AuthenticateResult,
+  AuthenticationChallengeResponse,
+  AuthenticationInitResponse,
+  AuthenticationRefreshResponse,
+  AuthenticationStatusResponse,
+  AuthenticationTokensResponse,
+  SubjectIdentifierType,
+  TokenInfo,
+} from '../types/auth.js';
 import type { RequestOptions } from '../types/common.js';
+import { AuthenticationError, SessionError } from '../errors/index.js';
 import { signXades } from '../utils/xades.js';
 import { parsePkcs12 } from '../utils/certificate.js';
 import type { ParsedCertificate } from '../utils/certificate.js';
-import { buildXml } from '../utils/xml.js';
-import { randomUUID } from 'node:crypto';
+import { buildAuthTokenRequest } from '../utils/auth-xml.js';
+import { sleep, throwIfAborted } from '../utils/async.js';
 
-export class AuthResource extends BaseResource {
+const AUTH_POLL_INTERVAL_MS = 1000;
+const AUTH_POLL_MAX_ATTEMPTS = 60;
+const AUTH_STATUS_IN_PROGRESS = 100;
+const AUTH_STATUS_SUCCESS = 200;
+
+export interface AuthenticateParams {
+  subjectIdentifierType?: SubjectIdentifierType;
+  /** Overrides the client-level `verifyCertificateChain` setting. */
+  verifyCertificateChain?: boolean;
+  requestOptions?: RequestOptions;
+}
+
+export interface SubmitXadesSignatureParams {
+  signedXml: string;
+  verifyCertificateChain?: boolean;
+  requestOptions?: RequestOptions;
+}
+
+export interface AuthenticationOperationParams {
+  referenceNumber: string;
+  /** `authenticationToken.token` returned by `submitXadesSignature()`. */
+  authenticationToken: string;
+  requestOptions?: RequestOptions;
+}
+
+/**
+ * KSeF API 2.0 authentication (`/auth/*`).
+ *
+ * The typical flow is wrapped by `authenticate()`; the individual steps are
+ * exposed for callers that sign the request externally (HSM, cloud signer).
+ */
+export class AuthResource extends BaseResource implements TokenRefresher {
   private parsedCertificate?: ParsedCertificate;
+  private refreshInFlight?: Promise<TokenInfo>;
 
-  /**
-   * Requests an authorisation challenge from KSeF.
-   * This is the first step of the certificate-based auth flow.
-   */
-  async getChallenge(options?: {
+  constructor(context: ResourceContext) {
+    super(context);
+  }
+
+  /** Current access/refresh tokens, e.g. for persisting between processes. */
+  get tokens(): AuthenticationTokensResponse | null {
+    const { accessToken, refreshToken } = this.context.tokens;
+    return accessToken && refreshToken ? { accessToken, refreshToken } : null;
+  }
+
+  /** Restores previously obtained tokens instead of authenticating again. */
+  useTokens(tokens: AuthenticationTokensResponse): void {
+    this.context.tokens.setTokens(tokens.accessToken, tokens.refreshToken);
+  }
+
+  /** Step 1: `POST /auth/challenge`. */
+  async challenge(options?: {
     requestOptions?: RequestOptions;
-  }): Promise<AuthorisationChallengeResponse> {
-    return this.requestJson<AuthorisationChallengeResponse>(
-      'POST',
-      '/online/Session/AuthorisationChallenge',
-      {
-        body: {
-          contextIdentifier: {
-            type: 'onip',
-            identifier: this.config.identifier,
-          },
-        },
-        authenticated: false,
-        requestOptions: options?.requestOptions,
-      },
-    );
-  }
-
-  /**
-   * Performs the full certificate auth flow:
-   * 1. Get challenge
-   * 2. Sign challenge XML with XAdES
-   * 3. Submit InitSigned
-   * Returns the reference number for session status polling.
-   */
-  async initSigned(options?: { requestOptions?: RequestOptions }): Promise<InitSignedResponse> {
-    this.logger?.info('Starting certificate authentication flow');
-
-    // Step 1: Get challenge
-    const challenge = await this.getChallenge({ requestOptions: options?.requestOptions });
-    this.logger?.debug(`Got challenge: ${challenge.challenge}`);
-
-    // Step 2: Parse certificate (cached for the lifetime of the client)
-    const parsed = this.getCertificate();
-
-    // Step 3: Generate token
-    const token = randomUUID();
-
-    // Step 4: Build InitSigned XML
-    const initXml = buildInitSignedXml(
-      challenge.challenge,
-      challenge.timestamp,
-      this.config.identifier,
-      token,
-    );
-
-    // Step 5: Sign with XAdES
-    const signedXml = signXades({
-      xml: initXml,
-      privateKeyPem: parsed.privateKeyPem,
-      certificatePem: parsed.certificatePem,
+  }): Promise<AuthenticationChallengeResponse> {
+    return this.requestJson<AuthenticationChallengeResponse>('POST', '/auth/challenge', {
+      auth: { type: 'none' },
+      requestOptions: options?.requestOptions,
     });
+  }
 
-    this.logger?.debug('Signed InitSigned XML with XAdES');
+  /** Step 2: builds the `AuthTokenRequest` XML for the configured NIP. */
+  buildAuthTokenRequest(challenge: string, subjectIdentifierType?: SubjectIdentifierType): string {
+    return buildAuthTokenRequest({
+      challenge,
+      nip: this.config.identifier,
+      subjectIdentifierType,
+    });
+  }
 
-    // Step 6: Submit to KSeF
-    const response = await this.requestJson<InitSignedResponse>(
-      'POST',
-      '/online/Session/InitSigned',
+  /** Step 3: signs the `AuthTokenRequest` with the configured PKCS#12 certificate (XAdES-BES). */
+  signAuthTokenRequest(xml: string): string {
+    const certificate = this.getCertificate();
+    return signXades({
+      xml,
+      privateKeyPem: certificate.privateKeyPem,
+      certificatePem: certificate.certificatePem,
+    });
+  }
+
+  /** Step 4: `POST /auth/xades-signature` (HTTP 202). */
+  async submitXadesSignature(
+    params: SubmitXadesSignatureParams,
+  ): Promise<AuthenticationInitResponse> {
+    const verifyCertificateChain =
+      params.verifyCertificateChain ?? this.config.verifyCertificateChain;
+    const response = await this.requestRaw('POST', '/auth/xades-signature', {
+      body: params.signedXml,
+      contentType: 'application/xml',
+      headers: { Accept: 'application/json' },
+      query: verifyCertificateChain === undefined ? undefined : { verifyCertificateChain },
+      auth: { type: 'none' },
+      requestOptions: params.requestOptions,
+    });
+    return JSON.parse(response.body) as AuthenticationInitResponse;
+  }
+
+  /** Step 5: `GET /auth/{referenceNumber}`, authenticated with the authentication token. */
+  async status(params: AuthenticationOperationParams): Promise<AuthenticationStatusResponse> {
+    return this.requestJson<AuthenticationStatusResponse>(
+      'GET',
+      `/auth/${encodeURIComponent(params.referenceNumber)}`,
       {
-        body: { xml: Buffer.from(signedXml).toString('base64') },
-        authenticated: false,
-        requestOptions: options?.requestOptions,
+        auth: { type: 'bearer', token: params.authenticationToken },
+        requestOptions: params.requestOptions,
       },
     );
+  }
 
-    this.logger?.info(`InitSigned submitted, ref: ${response.referenceNumber}`);
-    return response;
+  /** Step 6: `POST /auth/token/redeem`; stores the returned tokens in the client. */
+  async redeem(
+    params: Omit<AuthenticationOperationParams, 'referenceNumber'>,
+  ): Promise<AuthenticationTokensResponse> {
+    const tokens = await this.requestJson<AuthenticationTokensResponse>(
+      'POST',
+      '/auth/token/redeem',
+      {
+        auth: { type: 'bearer', token: params.authenticationToken },
+        requestOptions: params.requestOptions,
+      },
+    );
+    this.context.tokens.setTokens(tokens.accessToken, tokens.refreshToken);
+    this.logger?.info(`Authenticated; access token valid until ${tokens.accessToken.validUntil}`);
+    return tokens;
   }
 
   /**
-   * Parses the configured PKCS#12 certificate once and caches the result,
-   * so repeated session initialisations do not spawn openssl again.
+   * Full certificate-based authentication:
+   * challenge → AuthTokenRequest → XAdES → submit → poll status → redeem tokens.
    */
+  async authenticate(params?: AuthenticateParams): Promise<AuthenticateResult> {
+    const requestOptions = params?.requestOptions;
+    const signal = requestOptions?.signal;
+
+    this.logger?.info('Starting KSeF authentication with XAdES signature');
+    const challenge = await this.challenge({ requestOptions });
+    const xml = this.buildAuthTokenRequest(challenge.challenge, params?.subjectIdentifierType);
+    const signedXml = this.signAuthTokenRequest(xml);
+    const init = await this.submitXadesSignature({
+      signedXml,
+      verifyCertificateChain: params?.verifyCertificateChain,
+      requestOptions,
+    });
+    this.logger?.debug(`Authentication operation started, ref: ${init.referenceNumber}`);
+
+    const authenticationToken = init.authenticationToken.token;
+
+    for (let attempt = 0; attempt < AUTH_POLL_MAX_ATTEMPTS; attempt++) {
+      const status = await this.status({
+        referenceNumber: init.referenceNumber,
+        authenticationToken,
+        requestOptions,
+      });
+
+      if (status.status.code === AUTH_STATUS_SUCCESS) {
+        const tokens = await this.redeem({ authenticationToken, requestOptions });
+        return { ...tokens, referenceNumber: init.referenceNumber };
+      }
+
+      if (status.status.code !== AUTH_STATUS_IN_PROGRESS) {
+        const details = status.status.details?.length
+          ? `: ${status.status.details.join('; ')}`
+          : '';
+        throw new SessionError(
+          `Authentication failed: ${status.status.description} (code ${status.status.code})${details}`,
+        );
+      }
+
+      await sleep(AUTH_POLL_INTERVAL_MS, signal);
+      throwIfAborted(signal);
+    }
+
+    throw new SessionError(
+      `Authentication timed out after ${AUTH_POLL_MAX_ATTEMPTS} status checks (ref: ${init.referenceNumber})`,
+    );
+  }
+
+  /**
+   * `POST /auth/token/refresh`, authenticated with the refresh token.
+   * Concurrent callers share one in-flight refresh.
+   */
+  async refreshAccessToken(requestOptions?: RequestOptions): Promise<TokenInfo> {
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.doRefresh(requestOptions).finally(() => {
+        this.refreshInFlight = undefined;
+      });
+    }
+    return this.refreshInFlight;
+  }
+
+  private async doRefresh(requestOptions?: RequestOptions): Promise<TokenInfo> {
+    const refreshToken = this.context.tokens.requireRefreshToken();
+    try {
+      const response = await this.requestJson<AuthenticationRefreshResponse>(
+        'POST',
+        '/auth/token/refresh',
+        {
+          auth: { type: 'bearer', token: refreshToken },
+          requestOptions,
+        },
+      );
+      this.context.tokens.setAccessToken(response.accessToken);
+      this.logger?.debug(`Access token refreshed; valid until ${response.accessToken.validUntil}`);
+      return response.accessToken;
+    } catch (err) {
+      if (err instanceof AuthenticationError) {
+        this.context.tokens.clear();
+        this.context.session.clear();
+        this.logger?.warn('Refresh token rejected by KSeF; local tokens and session cleared');
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * `DELETE /auth/sessions/current`: invalidates the refresh token on the
+   * server side (access tokens stay valid until they expire) and clears local state.
+   */
+  async revoke(options?: { requestOptions?: RequestOptions }): Promise<void> {
+    await this.requestRaw('DELETE', '/auth/sessions/current', {
+      requestOptions: options?.requestOptions,
+    });
+    this.context.tokens.clear();
+    this.context.session.clear();
+    this.logger?.info('Authentication session revoked');
+  }
+
+  /** Parses the configured PKCS#12 once and caches it for the lifetime of the client. */
   private getCertificate(): ParsedCertificate {
     if (!this.parsedCertificate) {
       this.parsedCertificate = parsePkcs12(
@@ -98,38 +254,4 @@ export class AuthResource extends BaseResource {
     }
     return this.parsedCertificate;
   }
-}
-
-function buildInitSignedXml(
-  challenge: string,
-  timestamp: string,
-  identifier: string,
-  token: string,
-): string {
-  const obj = {
-    InitSessionSignedRequest: {
-      '@_xmlns': 'http://ksef.mf.gov.pl/schema/gtw/svc/online/types/2021/10/01/0001',
-      Context: {
-        Challenge: challenge,
-        Identifier: {
-          '@_xmlns:xsi': 'http://www.w3.org/2001/XMLSchema-instance',
-          '@_xsi:type': 'SubjectIdentifierByCompanyType',
-          Identifier: identifier,
-        },
-        DocumentType: {
-          Service: 'KSeF',
-          FormCode: {
-            SystemCode: 'FA (2)',
-            SchemaVersion: '1-0E',
-            TargetNamespace: 'http://crd.gov.pl/wzor/2023/06/29/12648/',
-            Value: 'FA',
-          },
-        },
-        Token: token,
-      },
-      Timestamp: timestamp,
-    },
-  };
-
-  return buildXml(obj);
 }

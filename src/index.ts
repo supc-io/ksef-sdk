@@ -20,88 +20,84 @@ export {
 
 export type { XsdValidationDetail } from './errors/index.js';
 
-// Types
-export { Mode } from './types/common.js';
-export type { RequestOptions, Logger, ClientConfig } from './types/common.js';
+// Configuration
+export { Mode, FormCodes } from './types/common.js';
+export type { RequestOptions, Logger, ClientConfig, FormCode } from './types/common.js';
 
+// Authentication
 export type {
-  AuthorisationChallengeRequest,
-  AuthorisationChallengeResponse,
-  InitSignedRequest,
-  InitSignedResponse,
+  AuthenticationChallengeResponse,
+  AuthenticationInitResponse,
+  AuthenticationStatusResponse,
+  AuthenticationTokensResponse,
+  AuthenticationRefreshResponse,
+  AuthenticationMethodInfo,
+  AuthenticateResult,
+  StatusInfo,
+  SubjectIdentifierType,
+  TokenInfo,
 } from './types/auth.js';
-
 export type {
-  SessionInitResult,
+  AuthenticateParams,
+  AuthenticationOperationParams,
+  SubmitXadesSignatureParams,
+} from './resources/auth.js';
+export { buildAuthTokenRequest, AUTH_TOKEN_REQUEST_NS } from './utils/auth-xml.js';
+export type { AuthTokenRequestParams } from './utils/auth-xml.js';
+
+// Sessions
+export type {
+  OpenSessionParams,
+  OpenSessionResult,
+  SessionReferenceParams,
   SessionStatusResponse,
-  SessionTerminateResponse,
+  SessionInvoicesParams,
+  SessionInvoicesResponse,
+  SessionInvoiceStatusParams,
+  SessionInvoiceStatus,
+  InvoiceStatusInfo,
+  UpoPage,
 } from './types/session.js';
 
+// Invoices
 export type {
   InvoiceSendParams,
   InvoiceSendResult,
   InvoiceStatusParams,
   InvoiceStatusResult,
-  InvoiceQueryParams,
-  InvoiceQueryResult,
-  InvoiceHeader,
-  InvoiceSubject,
   InvoiceDownloadParams,
+  InvoiceQueryParams,
+  InvoiceQueryFilters,
+  InvoiceQueryDateRange,
+  InvoiceQueryDateType,
+  InvoiceQuerySubjectType,
+  InvoiceQueryResult,
+  InvoiceMetadata,
+  InvoiceMetadataParty,
 } from './types/invoice.js';
 
+// UPO
 export type {
-  BatchInitParams,
-  BatchInitResult,
-  PackagePartSignature,
-  BatchHeaderEntry,
-  BatchSendParams,
-  BatchSendResult,
-  BatchFinishParams,
-  BatchFinishResult,
-  BatchStatusParams,
-  BatchStatusResult,
-} from './types/batch.js';
+  SessionUpoParams,
+  InvoiceUpoParams,
+  KsefNumberUpoParams,
+  UpoDownloadParams,
+} from './types/upo.js';
 
-export type {
-  CertificateEnrollParams,
-  CertificateEnrollResult,
-  CertificateRetrieveParams,
-  CertificateRetrieveResult,
-  CertificateRevokeParams,
-  CertificateRevokeResult,
-} from './types/certificate.js';
+// Security
+export type { PublicKeyCertificate, PublicKeyCertificateUsage } from './types/security.js';
 
-export type {
-  PermissionGrantParams,
-  PermissionGrantResult,
-  PermissionRevokeParams,
-  PermissionRevokeResult,
-  PermissionQueryParams,
-  PermissionQueryResult,
-  PermissionCredential,
-  CredentialRole,
-} from './types/permission.js';
-
-export type {
-  ContextLimitParams,
-  ContextLimitResult,
-  SubjectLimitParams,
-  SubjectLimitResult,
-  RateLimitParams,
-  RateLimitResult,
-  LimitEntry,
-} from './types/limit.js';
-
-export type {
-  ExportInitParams,
-  ExportInitResult,
-  ExportStatusParams,
-  ExportStatusResult,
-  ExportPart,
-  ExportDownloadParams,
-  UpoParams,
-  UpoResult,
-} from './types/export.js';
+// Cryptography and signing helpers (reusable for custom flows)
+export { signXades } from './utils/xades.js';
+export type { XadesSignParams } from './utils/xades.js';
+export {
+  generateSymmetricKey,
+  encryptAes256Cbc,
+  decryptAes256Cbc,
+  encryptRsaOaepSha256,
+  sha256Base64,
+} from './utils/encryption.js';
+export type { SymmetricKeyMaterial } from './utils/encryption.js';
 
 // Validation
 export { validateXmlAgainstXsd } from './utils/xsd.js';

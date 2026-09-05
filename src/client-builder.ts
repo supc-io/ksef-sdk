@@ -4,8 +4,8 @@ import { DefaultHttpClient } from './http/default-http-client.js';
 import { RetryHttpClient } from './http/retry.js';
 import { ConfigurationError } from './errors/index.js';
 import { validateNip, normalizeNip } from './utils/nip.js';
-import { BASE_URLS } from './types/common.js';
-import type { Logger, ClientConfig, Mode } from './types/common.js';
+import { BASE_URLS, FormCodes } from './types/common.js';
+import type { Logger, ClientConfig, FormCode, Mode } from './types/common.js';
 import type { HttpClient } from './http/http-client.js';
 
 export class KsefClientBuilder {
@@ -19,6 +19,8 @@ export class KsefClientBuilder {
   private _httpClient?: HttpClient;
   private _validateXml = false;
   private _xsdSchemaPath?: string;
+  private _formCode: FormCode = FormCodes.FA3;
+  private _verifyCertificateChain?: boolean;
 
   /**
    * Sets the KSeF environment mode.
@@ -114,6 +116,26 @@ export class KsefClientBuilder {
   }
 
   /**
+   * Sets the invoice schema used when opening sessions. Defaults to FA (3),
+   * the only FA schema accepted on DEMO and production. Use `FormCodes.FA2`
+   * on TEST for FA (2) invoices.
+   */
+  formCode(formCode: FormCode): this {
+    this._formCode = formCode;
+    return this;
+  }
+
+  /**
+   * Asks KSeF to verify the certificate chain (OCSP/CRL) during XAdES
+   * authentication. Relevant on TEST, where self-generated certificates are
+   * accepted without chain verification by default.
+   */
+  verifyCertificateChain(enabled = true): this {
+    this._verifyCertificateChain = enabled;
+    return this;
+  }
+
+  /**
    * Builds the KsefClient. Validates configuration and throws ConfigurationError if invalid.
    */
   build(): KsefClient {
@@ -148,6 +170,12 @@ export class KsefClientBuilder {
       );
     }
 
+    if (!isValidFormCode(this._formCode)) {
+      throw new ConfigurationError(
+        'formCode must contain non-empty systemCode, schemaVersion and value (see FormCodes).',
+      );
+    }
+
     if (!Number.isFinite(this._timeout) || this._timeout <= 0) {
       throw new ConfigurationError(
         `timeout must be a positive number of milliseconds, got ${this._timeout}`,
@@ -165,6 +193,8 @@ export class KsefClientBuilder {
       logger: this._logger,
       validateXml: this._validateXml,
       xsdSchemaPath: this._xsdSchemaPath,
+      formCode: this._formCode,
+      verifyCertificateChain: this._verifyCertificateChain,
     };
 
     const innerHttp = this._httpClient ?? new DefaultHttpClient();
@@ -172,4 +202,16 @@ export class KsefClientBuilder {
 
     return new KsefClient(httpClient, config);
   }
+}
+
+function isValidFormCode(formCode: FormCode | undefined): formCode is FormCode {
+  return (
+    !!formCode &&
+    typeof formCode.systemCode === 'string' &&
+    formCode.systemCode.length > 0 &&
+    typeof formCode.schemaVersion === 'string' &&
+    formCode.schemaVersion.length > 0 &&
+    typeof formCode.value === 'string' &&
+    formCode.value.length > 0
+  );
 }

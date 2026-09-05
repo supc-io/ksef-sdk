@@ -1,24 +1,33 @@
 import { BaseResource } from './base-resource.js';
+import type { ResourceContext } from './base-resource.js';
+import type { SessionsResource } from './sessions.js';
 import { validateXmlAgainstXsd } from '../utils/xsd.js';
+import { encryptAes256Cbc, sha256Base64 } from '../utils/encryption.js';
 import type {
+  InvoiceDownloadParams,
+  InvoiceQueryParams,
+  InvoiceQueryResult,
   InvoiceSendParams,
   InvoiceSendResult,
   InvoiceStatusParams,
   InvoiceStatusResult,
-  InvoiceQueryParams,
-  InvoiceQueryResult,
-  InvoiceDownloadParams,
 } from '../types/invoice.js';
 
 export class InvoicesResource extends BaseResource {
+  constructor(
+    context: ResourceContext,
+    private readonly sessions: SessionsResource,
+  ) {
+    super(context);
+  }
+
   /**
-   * Sends an invoice XML to KSeF.
-   * If XSD validation is enabled in the client config, the XML is validated
-   * against the FA(2) schema before sending.
+   * Sends an invoice within the open interactive session
+   * (`POST /sessions/online/{referenceNumber}/invoices`, HTTP 202).
    *
-   * @param params - The invoice XML and optional request options.
-   * @returns The send result with reference numbers.
-   * @throws XsdValidationError if validation is enabled and the XML is invalid.
+   * The XML is optionally validated against the configured XSD, then encrypted
+   * with the session's AES-256-CBC key; both the plain and encrypted SHA-256
+   * digests and sizes are sent alongside the payload.
    */
   async send(params: InvoiceSendParams): Promise<InvoiceSendResult> {
     if (this.config.validateXml && this.config.xsdSchemaPath) {
@@ -26,59 +35,63 @@ export class InvoicesResource extends BaseResource {
       validateXmlAgainstXsd(params.xml, this.config.xsdSchemaPath);
     }
 
-    return this.requestJson<InvoiceSendResult>('PUT', '/online/Invoice/Send', {
-      body: { invoiceBody: { type: 'plain', invoiceBody: params.xml } },
-      requestOptions: params.requestOptions,
-    });
-  }
+    const session = this.context.session.requireSession();
+    const plain = Buffer.from(params.xml, 'utf-8');
+    const encrypted = encryptAes256Cbc(plain, session.symmetricKey, session.initializationVector);
+    const invoiceHash = sha256Base64(plain);
 
-  /**
-   * Gets the processing status of a sent invoice.
-   */
-  async status(params: InvoiceStatusParams): Promise<InvoiceStatusResult> {
-    return this.requestJson<InvoiceStatusResult>(
-      'GET',
-      `/online/Invoice/Status/${params.invoiceElementReferenceNumber}`,
-      { requestOptions: params.requestOptions },
-    );
-  }
-
-  /**
-   * Queries invoices matching the given criteria.
-   */
-  async query(params: InvoiceQueryParams): Promise<InvoiceQueryResult> {
-    const body = {
-      queryCriteria: {
-        subjectType: params.subjectType,
-        type: params.type ?? 'incremental',
-        invoicingDateFrom: params.invoicingDateFrom,
-        invoicingDateTo: params.invoicingDateTo,
-        ksefReferenceNumberList: params.ksefReferenceNumberList,
-      },
-      queryDetails: {
-        pageSize: params.pageSize ?? 10,
-        pageOffset: params.pageOffset ?? 0,
-      },
+    const body: Record<string, unknown> = {
+      invoiceHash,
+      invoiceSize: plain.length,
+      encryptedInvoiceHash: sha256Base64(encrypted),
+      encryptedInvoiceSize: encrypted.length,
+      encryptedInvoiceContent: encrypted.toString('base64'),
+      offlineMode: params.offlineMode ?? false,
     };
+    if (params.hashOfCorrectedInvoice) {
+      body.hashOfCorrectedInvoice = params.hashOfCorrectedInvoice;
+    }
 
-    return this.requestJson<InvoiceQueryResult>('POST', '/online/Query/Invoice/Sync', {
-      body,
+    const response = await this.requestJson<{ referenceNumber: string }>(
+      'POST',
+      `/sessions/online/${encodeURIComponent(session.referenceNumber)}/invoices`,
+      { body, requestOptions: params.requestOptions },
+    );
+
+    this.logger?.info(`Invoice accepted for processing, ref: ${response.referenceNumber}`);
+    return {
+      referenceNumber: response.referenceNumber,
+      sessionReferenceNumber: session.referenceNumber,
+      invoiceHash,
+    };
+  }
+
+  /** Processing status of an invoice sent in a session. */
+  async status(params: InvoiceStatusParams): Promise<InvoiceStatusResult> {
+    return this.sessions.invoiceStatus({
+      referenceNumber: params.sessionReferenceNumber,
+      invoiceReferenceNumber: params.invoiceReferenceNumber,
       requestOptions: params.requestOptions,
     });
   }
 
-  /**
-   * Downloads a specific invoice XML by its KSeF reference number.
-   */
+  /** `GET /invoices/ksef/{ksefNumber}`: the invoice XML. Requires `InvoiceRead`. */
   async download(params: InvoiceDownloadParams): Promise<string> {
-    const response = await this.requestRaw(
-      'GET',
-      `/online/Invoice/Get/${params.ksefReferenceNumber}`,
-      {
-        headers: { Accept: 'application/octet-stream' },
-        requestOptions: params.requestOptions,
+    return this.requestText('GET', `/invoices/ksef/${encodeURIComponent(params.ksefNumber)}`, {
+      requestOptions: params.requestOptions,
+    });
+  }
+
+  /** `POST /invoices/query/metadata`: invoice metadata matching the filters. */
+  async query(params: InvoiceQueryParams): Promise<InvoiceQueryResult> {
+    return this.requestJson<InvoiceQueryResult>('POST', '/invoices/query/metadata', {
+      body: params.filters,
+      query: {
+        sortOrder: params.sortOrder,
+        pageOffset: params.pageOffset,
+        pageSize: params.pageSize,
       },
-    );
-    return response.body;
+      requestOptions: params.requestOptions,
+    });
   }
 }

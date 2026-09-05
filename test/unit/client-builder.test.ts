@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { KsefClientBuilder } from '../../src/client-builder.js';
 import { KsefClient } from '../../src/client.js';
 import { ConfigurationError } from '../../src/errors/index.js';
-import { Mode } from '../../src/types/common.js';
+import { Mode, FormCodes } from '../../src/types/common.js';
 
 // Fake cert base64 — builder validates NIP, not cert contents (cert is parsed at auth time)
 const FAKE_CERT = Buffer.from('fake-p12-content').toString('base64');
@@ -123,14 +123,21 @@ describe('KsefClientBuilder', () => {
       .build();
 
     expect(client.auth).toBeDefined();
+    expect(client.security).toBeDefined();
     expect(client.sessions).toBeDefined();
-    expect(client.batch).toBeDefined();
     expect(client.invoices).toBeDefined();
     expect(client.upo).toBeDefined();
-    expect(client.exports).toBeDefined();
-    expect(client.certificates).toBeDefined();
-    expect(client.permissions).toBeDefined();
-    expect(client.limits).toBeDefined();
+    expect(client.isAuthenticated).toBe(false);
     expect(client.isSessionActive).toBe(false);
+    expect(client.currentSession).toBeNull();
+  });
+
+  it('accepts a form code and rejects malformed ones', () => {
+    const valid = () =>
+      new KsefClientBuilder().mode(Mode.Test).certificate(FAKE_CERT, 'p').identifier(VALID_NIP);
+    expect(valid().formCode(FormCodes.FA2).build()).toBeInstanceOf(KsefClient);
+    expect(() =>
+      valid().formCode({ systemCode: '', schemaVersion: '1-0E', value: 'FA' }).build(),
+    ).toThrow(ConfigurationError);
   });
 });

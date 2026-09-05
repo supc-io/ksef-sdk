@@ -59,7 +59,7 @@ try {
   } else if (error instanceof ServerError) {
     // 5xx — błąd po stronie KSeF
   } else if (error instanceof SessionError) {
-    // Brak aktywnej sesji — wywołaj client.sessions.init()
+    // Brak uwierzytelnienia lub otwartej sesji — wywołaj client.auth.authenticate() / client.sessions.open()
   } else if (error instanceof ConnectionError) {
     // Timeout, błąd sieciowy lub przerwanie
     console.log('Przyczyna:', error.cause);
@@ -88,14 +88,23 @@ try {
 | Właściwość  | Typ                          | Opis                                         |
 | ----------- | ---------------------------- | -------------------------------------------- |
 | `status`    | `number`                     | Kod HTTP (400, 401, 403, 404, 422, 429, 5xx) |
-| `code`      | `string \| null`             | Kod wyjątku KSeF (z `exceptionCode`)         |
-| `requestId` | `string \| null`             | Numer referencyjny z odpowiedzi              |
+| `code`      | `string \| null`             | `exceptionCode` z `ExceptionResponse` lub `reasonCode` z problem details (403) |
+| `requestId` | `string \| null`             | `exception.referenceNumber` lub `traceId`    |
+| `details`   | `string[]`                   | Dodatkowe linie szczegółów (`details` wyjątku, `status.details` przy 429) |
 | `headers`   | `Record<string, string>`     | Nagłówki odpowiedzi HTTP                     |
 | `message`   | `string`                     | Opis błędu                                   |
 
 ## ValidationError
 
 KSeF zgłasza błędy walidacji faktury i requestu jako HTTP **400** z listą `exception.exceptionDetailList`; niektóre endpointy używają też 422. Oba kody mapują się na `ValidationError`, więc jeden blok `instanceof ValidationError` obsługuje wszystkie przypadki.
+
+## PermissionDeniedError
+
+HTTP 403 w formacie problem details. `code` zawiera `reasonCode`: `missing-permissions`, `ip-not-allowed`, `insufficient-resource-access`, `auth-method-not-allowed`, `security-service-blocked`, `context-type-not-allowed`.
+
+## AuthenticationError
+
+HTTP 401. Przy uwierzytelnionym requeście SDK najpierw próbuje odświeżyć access token i ponowić request; `AuthenticationError` trafia do kodu wywołującego dopiero, gdy to się nie uda. Lokalne tokeny i sesja są wtedy wyczyszczone.
 
 ## ConnectionError
 
@@ -154,27 +163,40 @@ try {
 ## SessionError
 
 Rzucany gdy:
-- Operacja wymagająca sesji jest wywołana bez aktywnej sesji (przed `init()` lub po `terminate()` / `401`)
-- `sessions.init()` nie powiodło się: KSeF odrzucił inicjalizację, nie zwrócił tokena albo polling przekroczył limit prób
+- Operacja wymagająca uwierzytelnienia jest wywołana przed `auth.authenticate()` / `auth.useTokens()` albo po wyczyszczeniu tokenów
+- Operacja wymagająca sesji (np. `invoices.send()`) jest wywołana bez otwartej sesji
+- `auth.authenticate()` zakończyło się statusem innym niż sukces (415, 425, 450, 460, 470) albo polling przekroczył limit prób
 
-## Format wyjątków KSeF
+## Formaty błędów KSeF API 2.0
 
-KSeF zwraca błędy w formacie:
+Błędy 400 (`ExceptionResponse`):
 
 ```json
 {
   "exception": {
     "exceptionDetailList": [
-      {
-        "exceptionCode": 12345,
-        "exceptionDescription": "Opis błędu"
-      }
-    ]
+      { "exceptionCode": 21301, "exceptionDescription": "Opis błędu", "details": ["Szczegóły"] }
+    ],
+    "referenceNumber": "a1b2c3d4-...",
+    "serviceCode": "...",
+    "timestamp": "2026-09-03T12:00:00"
   }
 }
 ```
 
-Biblioteka automatycznie parsuje ten format i ustawia `code` oraz `message` na `KsefApiError`. Odpowiedź 2xx z pustym body zwraca `undefined`, a 2xx z body niebędącym JSON-em (np. strona HTML z proxy) kończy się `KsefError` z opisem endpointu.
+Błędy 401/403/410 (`application/problem+json`):
+
+```json
+{ "title": "Forbidden", "status": 403, "detail": "Brak uprawnień", "reasonCode": "missing-permissions", "traceId": "..." }
+```
+
+Błędy 429:
+
+```json
+{ "status": { "code": 429, "description": "Too Many Requests", "details": ["Przekroczono limit 20 żądań na minutę."] } }
+```
+
+Biblioteka rozpoznaje wszystkie trzy formaty i wypełnia `message`, `code`, `requestId` i `details` na `KsefApiError`. Odpowiedź 2xx z pustym body zwraca `undefined`, a 2xx z body niebędącym JSON-em (np. strona HTML z proxy) kończy się `KsefError` z opisem endpointu.
 
 ## Retry a błędy
 

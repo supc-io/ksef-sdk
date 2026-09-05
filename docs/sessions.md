@@ -1,79 +1,110 @@
-# Sesje
+# Sesja interaktywna
 
-> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
-
-Sesja KSeF jest wymagana do większości operacji (wysyłanie faktur, query, eksporty itp.). Biblioteka zarządza tokenem sesyjnym automatycznie.
+Faktury wysyła się w ramach sesji. SDK obsługuje sesję interaktywną (`/sessions/online`); sesja wsadowa jest w planach ([issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Wymaga wcześniejszego `client.auth.authenticate()`.
 
 ## Otwieranie sesji
 
 ```typescript
-const session = await client.sessions.init();
-
-console.log(session.referenceNumber); // Numer referencyjny sesji
-console.log(session.sessionToken);    // Token do autoryzacji requestów
+const session = await client.sessions.open();
+console.log(session.referenceNumber); // 36 znaków
+console.log(session.validUntil);      // KSeF zamknie sesję automatycznie po tym terminie
+console.log(session.formCode);        // { systemCode: 'FA (3)', schemaVersion: '1-0E', value: 'FA' }
 console.log(client.isSessionActive);  // true
 ```
 
-Metoda `init()` automatycznie:
-1. Pobiera challenge z KSeF
-2. Buduje i podpisuje XML InitSigned
-3. Wysyła request inicjalizacji
-4. Polluje status aż sesja się aktywuje (co 2 s, maksymalnie 30 prób)
-5. Zapisuje token w wewnętrznym `SessionManager`
+`open()`:
+1. Pobiera certyfikat klucza publicznego MF (`GET /security/public-key-certificates`, cache 1 h) z przeznaczeniem `SymmetricKeyEncryption`.
+2. Generuje klucz AES-256 (32 bajty) i IV (16 bajtów).
+3. Szyfruje klucz RSA-OAEP SHA-256 i wysyła `POST /sessions/online` z `formCode` i `encryption` (w tym `publicKeyId`).
+4. Zapamiętuje sesję z kluczem, żeby `invoices.send()` mogło szyfrować faktury.
 
-Błędy:
-- `SessionError` — KSeF odrzucił inicjalizację (`processingCode >= 400`), status `200` nie zawierał tokena albo polling przekroczył limit prób
-- `ConfigurationError` — problem z certyfikatem lub `openssl`
-- `ConnectionError` — timeout, błąd sieci lub przerwanie przez `requestOptions.signal` (polling również reaguje na sygnał)
+Schemat można nadpisać per sesja: `client.sessions.open({ formCode: FormCodes.FA2 })` (FA (2) tylko na TEST).
 
-## Sprawdzanie statusu
+Klient pamięta jedną otwartą sesję (`client.currentSession`). Metody przyjmujące `referenceNumber` używają jej domyślnie; można podać numer innej sesji, ale faktury da się wysyłać wyłącznie do bieżącej (tylko jej klucz jest znany).
+
+## Status sesji
 
 ```typescript
-const status = await client.sessions.status({
-  referenceNumber: 'numer-referencyjny',
-});
+const status = await client.sessions.status();
+console.log(status.status.code, status.status.description);
+console.log(status.invoiceCount, status.successfulInvoiceCount, status.failedInvoiceCount);
+```
 
-console.log(status.processingCode);
-console.log(status.processingDescription);
-console.log(status.timestamp);
+| Kod | Znaczenie                                         |
+| --- | ------------------------------------------------- |
+| 100 | Sesja interaktywna otwarta                        |
+| 170 | Sesja interaktywna zamknięta (trwa generowanie UPO) |
+| 200 | Sesja przetworzona pomyślnie, UPO dostępne        |
+| 415 | Błąd odszyfrowania dostarczonego klucza           |
+| 440 | Sesja anulowana (nie przesłano faktur)            |
+| 445 | Błąd weryfikacji, brak poprawnych faktur          |
+
+## Faktury w sesji
+
+```typescript
+// Lista faktur ze statusami (stronicowanie tokenem kontynuacji)
+let page = await client.sessions.invoices({ pageSize: 100 });
+for (const invoice of page.invoices) {
+  console.log(invoice.referenceNumber, invoice.status.code, invoice.ksefNumber);
+}
+while (page.continuationToken) {
+  page = await client.sessions.invoices({ pageSize: 100, continuationToken: page.continuationToken });
+}
+
+// Status pojedynczej faktury
+const invoice = await client.sessions.invoiceStatus({ invoiceReferenceNumber: 'numer-referencyjny' });
 ```
 
 ## Zamykanie sesji
 
 ```typescript
-const result = await client.sessions.terminate();
-
-console.log(result.referenceNumber);
-console.log(result.timestamp);
+await client.sessions.close();
 console.log(client.isSessionActive); // false
 ```
 
-Lokalna sesja jest czyszczona po udanym `terminate()` oraz gdy KSeF odpowie `401` (token już nieważny). Przy innych błędach (np. `5xx`) token pozostaje, żeby można było ponowić `terminate()`.
+Po zamknięciu KSeF asynchronicznie generuje zbiorcze UPO sesji. Odpytuj `status({ referenceNumber })`, aż `status.code === 200` i pojawi się `upo.pages`:
+
+```typescript
+const ref = session.referenceNumber;
+let status = await client.sessions.status({ referenceNumber: ref });
+while (status.status.code === 170) {
+  await new Promise((r) => setTimeout(r, 2000));
+  status = await client.sessions.status({ referenceNumber: ref });
+}
+for (const page of status.upo?.pages ?? []) {
+  const xml = await client.upo.forSession({ referenceNumber: ref, upoReferenceNumber: page.referenceNumber });
+  // albo bez tokena: await client.upo.download({ url: page.downloadUrl })
+}
+```
 
 ## Ważne
 
-- Jedna instancja `KsefClient` = jedna sesja
-- Po `terminate()` trzeba ponownie wywołać `init()` aby wykonywać operacje wymagające sesji
-- Sesja ma ograniczony czas życia po stronie KSeF — zamykaj ją po zakończeniu operacji
-- Operacja wymagająca sesji bez aktywnej sesji rzuca `SessionError` zanim wyśle jakikolwiek request
+- `close({ referenceNumber })` z numerem innym niż bieżąca sesja nie zmienia stanu klienta.
+- Odpowiedź `401`, której nie da się naprawić odświeżeniem tokena, czyści tokeny i sesję; kolejne wywołania rzucą `SessionError`.
+- Metody przyjmują `requestOptions` (`timeout`, `signal`).
 
 ## Typy
 
 ```typescript
-interface SessionInitResult {
+interface OpenSessionResult {
   referenceNumber: string;
-  sessionToken: string;
+  validUntil: string;
+  formCode: FormCode;
 }
 
 interface SessionStatusResponse {
-  processingCode: number;
-  processingDescription: string;
-  referenceNumber: string;
-  timestamp: string;
+  status: { code: number; description: string; details?: string[] | null };
+  dateCreated: string;
+  dateUpdated: string;
+  validUntil?: string | null;
+  upo?: { pages: { referenceNumber: string; downloadUrl: string; downloadUrlExpirationDate: string }[] } | null;
+  invoiceCount?: number | null;
+  successfulInvoiceCount?: number | null;
+  failedInvoiceCount?: number | null;
 }
 
-interface SessionTerminateResponse {
-  referenceNumber: string;
-  timestamp: string;
+interface SessionInvoicesResponse {
+  continuationToken?: string | null;
+  invoices: SessionInvoiceStatus[];
 }
 ```
