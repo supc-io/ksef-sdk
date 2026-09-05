@@ -1,5 +1,7 @@
 # Eksport masowy
 
+> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+
 Eksport masowy pozwala pobrać wiele faktur z danego zakresu dat jako paczki. Operacja jest asynchroniczna.
 
 ## Flow
@@ -7,12 +9,14 @@ Eksport masowy pozwala pobrać wiele faktur z danego zakresu dat jako paczki. Op
 ```
 1. exports.init()      →  Zlecenie eksportu (zakres dat)
 2. exports.status()    →  Polling statusu (aż processingCode wskaże gotowość)
-3. exports.download()  →  Pobranie poszczególnych części
+3. exports.download()  →  Pobranie poszczególnych części (bajty)
 ```
 
 ## Użycie
 
 ```typescript
+import { writeFileSync } from 'node:fs';
+
 // 1. Zlecenie eksportu
 const exportJob = await client.exports.init({
   dateFrom: '2025-01-01',
@@ -21,17 +25,21 @@ const exportJob = await client.exports.init({
 });
 console.log(exportJob.referenceNumber);
 
-// 2. Czekaj na zakończenie
+// 2. Czekaj na zakończenie (z limitem prób i obsługą błędu)
+const MAX_ATTEMPTS = 60;
 let status;
-do {
-  status = await client.exports.status({
-    referenceNumber: exportJob.referenceNumber,
-  });
-  // Odczekaj przed kolejnym zapytaniem
-  if (!status.partList) {
-    await new Promise((r) => setTimeout(r, 5000));
+for (let attempt = 0; ; attempt++) {
+  status = await client.exports.status({ referenceNumber: exportJob.referenceNumber });
+
+  if (status.processingCode >= 400) {
+    throw new Error(`Eksport nieudany: ${status.processingDescription} (${status.processingCode})`);
   }
-} while (!status.partList);
+  if (status.partList) break;
+  if (attempt >= MAX_ATTEMPTS) {
+    throw new Error('Eksport nie zakończył się w oczekiwanym czasie');
+  }
+  await new Promise((r) => setTimeout(r, 5000));
+}
 
 // 3. Pobierz części
 for (const part of status.partList) {
@@ -39,10 +47,12 @@ for (const part of status.partList) {
     referenceNumber: exportJob.referenceNumber,
     partReferenceNumber: part.partReferenceNumber,
   });
+  writeFileSync(part.partName, content); // content to Buffer z zawartością pliku
   console.log(`Pobrano: ${part.partName}`);
-  // content to string z zawartością pliku
 }
 ```
+
+`download()` zwraca `Buffer`, bo części eksportu są plikami binarnymi (zaszyfrowane archiwa ZIP). Dekodowanie do tekstu zniszczyłoby zawartość.
 
 ## Subject types
 

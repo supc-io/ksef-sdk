@@ -21,28 +21,19 @@ describe('KsefClientBuilder', () => {
 
   it('throws ConfigurationError when mode is missing', () => {
     expect(() =>
-      new KsefClientBuilder()
-        .certificate(FAKE_CERT, 'password')
-        .identifier(VALID_NIP)
-        .build(),
+      new KsefClientBuilder().certificate(FAKE_CERT, 'password').identifier(VALID_NIP).build(),
     ).toThrow(ConfigurationError);
   });
 
   it('throws ConfigurationError when certificate is missing', () => {
-    expect(() =>
-      new KsefClientBuilder()
-        .mode(Mode.Test)
-        .identifier(VALID_NIP)
-        .build(),
-    ).toThrow(ConfigurationError);
+    expect(() => new KsefClientBuilder().mode(Mode.Test).identifier(VALID_NIP).build()).toThrow(
+      ConfigurationError,
+    );
   });
 
   it('throws ConfigurationError when identifier is missing', () => {
     expect(() =>
-      new KsefClientBuilder()
-        .mode(Mode.Test)
-        .certificate(FAKE_CERT, 'password')
-        .build(),
+      new KsefClientBuilder().mode(Mode.Test).certificate(FAKE_CERT, 'password').build(),
     ).toThrow(ConfigurationError);
   });
 
@@ -54,6 +45,29 @@ describe('KsefClientBuilder', () => {
         .identifier('1234567890')
         .build(),
     ).toThrow(ConfigurationError);
+  });
+
+  it('accepts an empty certificate password', () => {
+    const client = new KsefClientBuilder()
+      .mode(Mode.Test)
+      .certificate(FAKE_CERT, '')
+      .identifier(VALID_NIP)
+      .build();
+
+    expect(client).toBeInstanceOf(KsefClient);
+  });
+
+  it('throws ConfigurationError when the certificate file cannot be read', () => {
+    expect(() => new KsefClientBuilder().certificatePath('/nonexistent/cert.p12', 'x')).toThrow(
+      ConfigurationError,
+    );
+  });
+
+  it('rejects negative maxRetries and non-positive timeouts', () => {
+    const valid = () =>
+      new KsefClientBuilder().mode(Mode.Test).certificate(FAKE_CERT, 'p').identifier(VALID_NIP);
+    expect(() => valid().maxRetries(-1).build()).toThrow(ConfigurationError);
+    expect(() => valid().timeout(0).build()).toThrow(ConfigurationError);
   });
 
   it('accepts NIP with dashes', () => {

@@ -10,6 +10,7 @@ export default defineConfig([
     clean: true,
     target: 'node18',
     splitting: false,
+    tsconfig: 'tsconfig.build.json',
   },
   {
     entry: ['src/index.ts'],
@@ -20,5 +21,6 @@ export default defineConfig([
     clean: true,
     target: 'node18',
     splitting: false,
+    tsconfig: 'tsconfig.build.json',
   },
 ]);

@@ -1,22 +1,33 @@
 import { BaseResource } from './base-resource.js';
 import type { SessionStatusResponse, SessionTerminateResponse } from '../types/session.js';
 import type { SessionInitResult } from '../types/session.js';
-import type { RequestOptions } from '../types/common.js';
-import { AuthResource } from './auth.js';
+import type { ClientConfig, RequestOptions } from '../types/common.js';
+import type { HttpClient } from '../http/http-client.js';
+import type { SessionManager } from '../session-manager.js';
+import type { AuthResource } from './auth.js';
+import { SessionError } from '../errors/index.js';
+import { sleep, throwIfAborted } from '../utils/async.js';
 
 const SESSION_POLL_INTERVAL_MS = 2000;
 const SESSION_POLL_MAX_ATTEMPTS = 30;
 
 export class SessionsResource extends BaseResource {
+  constructor(
+    httpClient: HttpClient,
+    config: ClientConfig,
+    sessionManager: SessionManager,
+    private readonly auth: AuthResource,
+  ) {
+    super(httpClient, config, sessionManager);
+  }
+
   /**
    * Initialises a KSeF session using certificate-based authentication.
    * Performs the full auth flow and polls until the session is active.
    */
-  async init(options?: {
-    requestOptions?: RequestOptions;
-  }): Promise<SessionInitResult> {
-    const auth = new AuthResource(this.httpClient, this.config, this.sessionManager);
-    const initResult = await auth.initSigned({ requestOptions: options?.requestOptions });
+  async init(options?: { requestOptions?: RequestOptions }): Promise<SessionInitResult> {
+    const signal = options?.requestOptions?.signal;
+    const initResult = await this.auth.initSigned({ requestOptions: options?.requestOptions });
 
     this.logger?.info(`Polling session status for ref: ${initResult.referenceNumber}`);
 
@@ -28,9 +39,15 @@ export class SessionsResource extends BaseResource {
       });
 
       if (status.processingCode === 200) {
-        // Session is active — extract session token from response
-        const sessionToken = (status as SessionStatusResponse & { sessionToken?: { token?: string } })
-          .sessionToken?.token ?? '';
+        const sessionToken = (
+          status as SessionStatusResponse & { sessionToken?: { token?: string } }
+        ).sessionToken?.token;
+
+        if (!sessionToken) {
+          throw new SessionError(
+            `KSeF reported session ${initResult.referenceNumber} as active but the status response did not include a session token`,
+          );
+        }
 
         this.sessionManager.setSession(sessionToken, initResult.referenceNumber);
         this.logger?.info('Session is now active');
@@ -42,15 +59,16 @@ export class SessionsResource extends BaseResource {
       }
 
       if (status.processingCode >= 400) {
-        throw new Error(
+        throw new SessionError(
           `Session init failed: ${status.processingDescription} (code: ${status.processingCode})`,
         );
       }
 
-      await sleep(SESSION_POLL_INTERVAL_MS);
+      await sleep(SESSION_POLL_INTERVAL_MS, signal);
+      throwIfAborted(signal);
     }
 
-    throw new Error(
+    throw new SessionError(
       `Session init timed out after ${SESSION_POLL_MAX_ATTEMPTS} attempts for ref: ${initResult.referenceNumber}`,
     );
   }
@@ -64,7 +82,7 @@ export class SessionsResource extends BaseResource {
   }): Promise<SessionStatusResponse> {
     return this.requestJson<SessionStatusResponse>(
       'GET',
-      `/online/Session/Status/${params.referenceNumber}`,
+      `/online/Session/Status/${encodeURIComponent(params.referenceNumber)}`,
       {
         authenticated: false,
         requestOptions: params.requestOptions,
@@ -73,7 +91,8 @@ export class SessionsResource extends BaseResource {
   }
 
   /**
-   * Terminates the current active session.
+   * Terminates the current active session. The local session is cleared on
+   * success and when KSeF reports the token as no longer valid (HTTP 401).
    */
   async terminate(options?: {
     requestOptions?: RequestOptions;
@@ -87,8 +106,4 @@ export class SessionsResource extends BaseResource {
     this.logger?.info('Session terminated');
     return result;
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

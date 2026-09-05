@@ -1,16 +1,24 @@
 import { execFileSync } from 'node:child_process';
-import { writeFileSync, unlinkSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { XsdValidationError } from '../errors/index.js';
+import { ConfigurationError, XsdValidationError } from '../errors/index.js';
 import type { XsdValidationDetail } from '../errors/index.js';
 
 /**
+ * xmllint exit codes (see `man xmllint`).
+ * 1 = unclassified (e.g. XML not well-formed), 3/4 = validation error,
+ * 5 = error in schema compilation (missing or invalid XSD).
+ */
+const XMLLINT_SCHEMA_ERROR = 5;
+
+/**
  * Validates an XML string against an XSD schema using xmllint CLI.
- * Throws XsdValidationError if the XML does not conform to the schema.
  *
  * @param xml - XML string to validate
  * @param xsdPath - Absolute path to the XSD schema file
+ * @throws XsdValidationError if the XML does not conform to the schema (or is not well-formed)
+ * @throws ConfigurationError if xmllint is not installed or the XSD file cannot be loaded
  */
 export function validateXmlAgainstXsd(xml: string, xsdPath: string): void {
   const tempDir = mkdtempSync(join(tmpdir(), 'ksef-xsd-'));
@@ -21,38 +29,45 @@ export function validateXmlAgainstXsd(xml: string, xsdPath: string): void {
 
     execFileSync('xmllint', ['--noout', '--schema', xsdPath, xmlPath], {
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (error: unknown) {
-    const stderr = (error as { stderr?: string }).stderr ?? '';
-    const status = (error as { status?: number }).status;
+    const err = error as NodeJS.ErrnoException & {
+      status?: number | null;
+      stderr?: string | Buffer;
+    };
 
-    // xmllint returns exit code 3 or 4 for validation errors, other codes for other issues
-    if (status !== null && status !== undefined && status !== 0) {
-      const details = parseXmllintErrors(stderr);
-
-      if (details.length > 0) {
-        throw new XsdValidationError(
-          `Invoice XML does not conform to XSD schema: ${details.length} error(s) found`,
-          details,
-        );
-      }
-
-      // xmllint not found or other system error
-      if (stderr.includes('command not found') || stderr.includes('not recognized')) {
-        throw new Error(
-          'xmllint is not installed. Install libxml2-utils (Linux) or libxml2 (macOS) to enable XSD validation.',
-        );
-      }
-
-      throw new XsdValidationError(
-        `XSD validation failed: ${stderr.trim() || 'unknown error'}`,
-        [],
+    if (err.code === 'ENOENT') {
+      throw new ConfigurationError(
+        'xmllint CLI not found in PATH. Install libxml2-utils (Debian/Ubuntu) or libxml2 (macOS, Homebrew), or disable XML validation.',
       );
     }
+
+    if (err.status === null || err.status === undefined) {
+      // Not an xmllint exit status (e.g. writeFileSync failure) — propagate as-is.
+      throw error;
+    }
+
+    const stderr = String(err.stderr ?? '');
+
+    if (err.status === XMLLINT_SCHEMA_ERROR) {
+      throw new ConfigurationError(
+        `XSD schema could not be loaded from ${xsdPath}: ${stderr.trim() || 'unknown error'}`,
+      );
+    }
+
+    const details = parseXmllintErrors(stderr);
+
+    if (details.length > 0) {
+      throw new XsdValidationError(
+        `Invoice XML does not conform to XSD schema: ${details.length} error(s) found`,
+        details,
+      );
+    }
+
+    throw new XsdValidationError(`XSD validation failed: ${stderr.trim() || 'unknown error'}`, []);
   } finally {
-    try { unlinkSync(xmlPath); } catch { /* ignore */ }
-    try { unlinkSync(tempDir); } catch { /* ignore */ }
+    rmSync(tempDir, { recursive: true, force: true });
   }
 }
 

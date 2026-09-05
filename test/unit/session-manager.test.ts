@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SessionManager } from '../../src/session-manager.js';
+import { SessionError } from '../../src/errors/index.js';
 
 describe('SessionManager', () => {
   it('starts with no active session', () => {
@@ -17,6 +18,12 @@ describe('SessionManager', () => {
     expect(sm.referenceNumber).toBe('ref-001');
   });
 
+  it('rejects an empty token so isActive and requireToken never disagree', () => {
+    const sm = new SessionManager();
+    expect(() => sm.setSession('', 'ref-001')).toThrow(SessionError);
+    expect(sm.isActive).toBe(false);
+  });
+
   it('clear deactivates session', () => {
     const sm = new SessionManager();
     sm.setSession('token-123', 'ref-001');
@@ -31,8 +38,9 @@ describe('SessionManager', () => {
     expect(sm.requireToken()).toBe('token-123');
   });
 
-  it('requireToken throws when no session', () => {
+  it('requireToken throws SessionError when no session', () => {
     const sm = new SessionManager();
+    expect(() => sm.requireToken()).toThrow(SessionError);
     expect(() => sm.requireToken()).toThrow('No active session');
   });
 });

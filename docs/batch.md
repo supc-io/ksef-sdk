@@ -1,5 +1,8 @@
 # Operacje batch
 
+> **Status:** ten zasób wywołuje endpointy wygaszonego API KSeF 1.x i wymaga migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+
+
 Tryb batch pozwala wysyłać wiele faktur w jednym pakiecie. Wymaga aktywnej sesji.
 
 ## Flow

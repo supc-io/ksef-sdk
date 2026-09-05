@@ -4,8 +4,8 @@ import { DefaultHttpClient } from './http/default-http-client.js';
 import { RetryHttpClient } from './http/retry.js';
 import { ConfigurationError } from './errors/index.js';
 import { validateNip, normalizeNip } from './utils/nip.js';
-import { Mode, BASE_URLS } from './types/common.js';
-import type { Logger, ClientConfig } from './types/common.js';
+import { BASE_URLS } from './types/common.js';
+import type { Logger, ClientConfig, Mode } from './types/common.js';
 import type { HttpClient } from './http/http-client.js';
 
 export class KsefClientBuilder {
@@ -30,6 +30,7 @@ export class KsefClientBuilder {
 
   /**
    * Sets the certificate from a base64-encoded PKCS#12 file.
+   * An empty password is allowed for PKCS#12 files exported without one.
    */
   certificate(certBase64: string, password: string): this {
     this._certificateBase64 = certBase64;
@@ -39,9 +40,16 @@ export class KsefClientBuilder {
 
   /**
    * Sets the certificate from a file path.
+   * @throws ConfigurationError if the file cannot be read.
    */
   certificatePath(path: string, password: string): this {
-    const content = readFileSync(path);
+    let content: Buffer;
+    try {
+      content = readFileSync(path);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new ConfigurationError(`Cannot read certificate file "${path}": ${reason}`);
+    }
     this._certificateBase64 = content.toString('base64');
     this._certificatePassword = password;
     return this;
@@ -113,16 +121,14 @@ export class KsefClientBuilder {
       throw new ConfigurationError('Mode is required. Use .mode(Mode.Test) or similar.');
     }
 
-    if (!this._certificateBase64 || !this._certificatePassword) {
+    if (!this._certificateBase64 || this._certificatePassword === undefined) {
       throw new ConfigurationError(
         'Certificate is required. Use .certificate(base64, password) or .certificatePath(path, password).',
       );
     }
 
     if (!this._identifier) {
-      throw new ConfigurationError(
-        'Identifier (NIP) is required. Use .identifier("1234567890").',
-      );
+      throw new ConfigurationError('Identifier (NIP) is required. Use .identifier("1234563218").');
     }
 
     const nip = normalizeNip(this._identifier);
@@ -133,6 +139,18 @@ export class KsefClientBuilder {
     if (this._validateXml && !this._xsdSchemaPath) {
       throw new ConfigurationError(
         'XSD schema path is required when XML validation is enabled. Use .xsdSchemaPath("/path/to/FA2.xsd").',
+      );
+    }
+
+    if (!Number.isInteger(this._maxRetries) || this._maxRetries < 0) {
+      throw new ConfigurationError(
+        `maxRetries must be a non-negative integer, got ${this._maxRetries}`,
+      );
+    }
+
+    if (!Number.isFinite(this._timeout) || this._timeout <= 0) {
+      throw new ConfigurationError(
+        `timeout must be a positive number of milliseconds, got ${this._timeout}`,
       );
     }
 

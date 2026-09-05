@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { InvoicesResource } from '../../../src/resources/invoices.js';
 import { SessionManager } from '../../../src/session-manager.js';
-import { KsefApiError, NotFoundError } from '../../../src/errors/index.js';
+import { NotFoundError } from '../../../src/errors/index.js';
 import type { HttpClient, HttpRequestConfig, HttpResponse } from '../../../src/http/http-client.js';
 import type { ClientConfig } from '../../../src/types/common.js';
 import { Mode } from '../../../src/types/common.js';
@@ -87,9 +87,9 @@ describe('InvoicesResource', () => {
     }));
 
     const invoices = new InvoicesResource(http, baseConfig, sessionManager);
-    await expect(
-      invoices.status({ invoiceElementReferenceNumber: 'nonexistent' }),
-    ).rejects.toThrow(NotFoundError);
+    await expect(invoices.status({ invoiceElementReferenceNumber: 'nonexistent' })).rejects.toThrow(
+      NotFoundError,
+    );
   });
 
   it('throws when no session is active', async () => {
@@ -97,9 +97,7 @@ describe('InvoicesResource', () => {
     const http = createMockHttpClient(() => ({ status: 200, headers: {}, body: '{}' }));
     const invoices = new InvoicesResource(http, baseConfig, sessionManager);
 
-    await expect(invoices.send({ xml: '<Invoice/>' })).rejects.toThrow(
-      'No active session',
-    );
+    await expect(invoices.send({ xml: '<Invoice/>' })).rejects.toThrow('No active session');
   });
 
   it('query() sends search criteria', async () => {

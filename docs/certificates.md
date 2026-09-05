@@ -1,5 +1,8 @@
 # Zarządzanie certyfikatami
 
+> **Status:** ścieżki używane przez ten zasób nie występują ani w specyfikacji API KSeF 1.x, ani 2.0. Zasób zostanie przeprojektowany w ramach migracji na API 2.0 (śledzone w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1)). Poniższy opis dokumentuje obecne zachowanie kodu.
+
+
 Operacje na certyfikatach w ramach KSeF. Wymaga aktywnej sesji.
 
 > **Uwaga:** To nie jest ten sam certyfikat co certyfikat do autoryzacji. Te operacje dotyczą zarządzania certyfikatami zarejestrowanymi w KSeF.

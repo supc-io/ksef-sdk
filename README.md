@@ -1,8 +1,10 @@
 # @supcio/ksef-sdk
 
-TypeScript SDK do komunikacji z polskim Krajowym Systemem e-Faktur (KSeF 2.0).
+TypeScript SDK do komunikacji z polskim Krajowym Systemem e-Faktur (KSeF).
 
-Biblioteka zapewnia pełne API do autoryzacji certyfikatem kwalifikowanym, wysyłania i pobierania faktur, operacji batch, eksportów, zarządzania uprawnieniami i certyfikatami.
+Biblioteka zapewnia API do autoryzacji certyfikatem kwalifikowanym, wysyłania i pobierania faktur, operacji batch, eksportów, zarządzania uprawnieniami i certyfikatami.
+
+> **Stan projektu (wrzesień 2026).** Warstwa sieciowa biblioteki implementuje endpointy API KSeF 1.x (`/online/Session/...`, nagłówek `SessionToken`), które Ministerstwo Finansów wyłączyło 1 lutego 2026 r. Do czasu migracji na KSeF API 2.0, śledzonej w [issue #1](https://github.com/supc-io/ksef-sdk/issues/1), wywołania sieciowe nie połączą się z żadnym środowiskiem KSeF. Komponenty lokalne są gotowe do użycia: walidacja XSD, podpis XAdES-BES, parsowanie PKCS#12, hierarchia błędów, klient HTTP z retry.
 
 ## Wymagania
 
@@ -34,7 +36,7 @@ import { readFileSync } from 'fs';
 const client = new KsefClientBuilder()
   .mode(Mode.Test)
   .certificate(readFileSync('cert.p12').toString('base64'), 'haslo-certyfikatu')
-  .identifier('1234567890') // NIP
+  .identifier('1234563218') // NIP (przykładowy numer z poprawną sumą kontrolną)
   .build();
 
 // 2. Otwórz sesję
@@ -63,11 +65,13 @@ await client.sessions.terminate();
 
 ## Środowiska
 
-| Mode              | URL                                 | Opis                          |
-| ----------------- | ----------------------------------- | ----------------------------- |
-| `Mode.Production` | `https://ksef.mf.gov.pl/api`       | Produkcja                     |
-| `Mode.Demo`       | `https://ksef-demo.mf.gov.pl/api`  | Środowisko demo               |
-| `Mode.Test`       | `https://ksef-test.mf.gov.pl/api`  | Środowisko testowe            |
+| Mode              | URL                                | Opis                |
+| ----------------- | ---------------------------------- | ------------------- |
+| `Mode.Production` | `https://ksef.mf.gov.pl/api`       | Produkcja           |
+| `Mode.Demo`       | `https://ksef-demo.mf.gov.pl/api`  | Środowisko demo     |
+| `Mode.Test`       | `https://ksef-test.mf.gov.pl/api`  | Środowisko testowe  |
+
+Powyższe adresy należą do API 1.x. Adresy API 2.0 (`https://api.ksef.mf.gov.pl/v2`, `https://api-demo.ksef.mf.gov.pl/v2`, `https://api-test.ksef.mf.gov.pl/v2`) zostaną wprowadzone w ramach [issue #1](https://github.com/supc-io/ksef-sdk/issues/1).
 
 ## Konfiguracja klienta
 
@@ -76,13 +80,15 @@ const client = new KsefClientBuilder()
   .mode(Mode.Test)                              // Wymagane — środowisko
   .certificate(base64String, 'password')        // Wymagane — certyfikat PKCS#12 jako base64
   // lub: .certificatePath('./cert.p12', 'password')  // Alternatywnie — ścieżka do pliku
-  .identifier('1234567890')                     // Wymagane — NIP
+  .identifier('1234563218')                     // Wymagane — NIP
   .timeout(60_000)                              // Opcjonalne — timeout requestu w ms (domyślnie 30000)
   .maxRetries(3)                                // Opcjonalne — liczba ponowień (domyślnie 2)
   .logger(console)                              // Opcjonalne — custom logger
   .httpClient(customHttpClient)                 // Opcjonalne — własna implementacja HTTP
   .build();
 ```
+
+`build()` waliduje konfigurację i rzuca `ConfigurationError` przy brakującym trybie, certyfikacie lub NIP-ie, nieprawidłowej sumie kontrolnej NIP-u, ujemnym `maxRetries` albo niedodatnim `timeout`.
 
 ### Certyfikat
 
@@ -96,7 +102,9 @@ Biblioteka akceptuje certyfikat kwalifikowany w formacie PKCS#12 (.p12/.pfx) na 
 .certificatePath('./cert.p12', password)
 ```
 
-> **Uwaga:** Parsowanie certyfikatu wymaga komendy `openssl` dostępnej w systemowym PATH.
+Hasło może być pustym stringiem, jeśli plik PKCS#12 został wyeksportowany bez hasła. Certyfikat jest parsowany raz na instancję klienta, przy pierwszym otwarciu sesji.
+
+> **Uwaga:** Parsowanie certyfikatu wymaga komendy `openssl` dostępnej w systemowym PATH. Hasło jest przekazywane do `openssl` przez zmienną środowiskową procesu potomnego, nie przez argumenty wiersza poleceń. Pliki wyeksportowane starszymi algorytmami (RC2/3DES) są automatycznie otwierane z flagą `-legacy` na OpenSSL 3.
 
 ### Custom logger
 
@@ -115,16 +123,16 @@ interface Logger {
 
 Klient udostępnia zasoby (resources) odpowiadające domenom API KSeF:
 
-| Resource             | Opis                                        | Dokumentacja                              |
-| -------------------- | ------------------------------------------- | ----------------------------------------- |
-| `client.sessions`    | Zarządzanie sesjami (init, status, terminate) | [docs/sessions.md](docs/sessions.md)     |
-| `client.invoices`    | Wysyłanie, query, status, pobieranie faktur | [docs/invoices.md](docs/invoices.md)      |
-| `client.batch`       | Wysyłanie faktur w trybie batch             | [docs/batch.md](docs/batch.md)            |
-| `client.upo`         | Pobieranie UPO (Urzędowe Poświadczenie Odbioru) | [docs/upo.md](docs/upo.md)          |
-| `client.exports`     | Eksport masowy faktur                       | [docs/exports.md](docs/exports.md)        |
-| `client.certificates`| Zarządzanie certyfikatami                   | [docs/certificates.md](docs/certificates.md) |
-| `client.permissions` | Zarządzanie uprawnieniami                   | [docs/permissions.md](docs/permissions.md)|
-| `client.limits`      | Limity i quoty                              | [docs/limits.md](docs/limits.md)          |
+| Resource             | Opis                                            | Dokumentacja                                  |
+| -------------------- | ----------------------------------------------- | --------------------------------------------- |
+| `client.sessions`    | Zarządzanie sesjami (init, status, terminate)   | [docs/sessions.md](docs/sessions.md)          |
+| `client.invoices`    | Wysyłanie, query, status, pobieranie faktur     | [docs/invoices.md](docs/invoices.md)          |
+| `client.batch`       | Wysyłanie faktur w trybie batch                 | [docs/batch.md](docs/batch.md)                |
+| `client.upo`         | Pobieranie UPO (Urzędowe Poświadczenie Odbioru) | [docs/upo.md](docs/upo.md)                    |
+| `client.exports`     | Eksport masowy faktur                           | [docs/exports.md](docs/exports.md)            |
+| `client.certificates`| Zarządzanie certyfikatami                       | [docs/certificates.md](docs/certificates.md)  |
+| `client.permissions` | Zarządzanie uprawnieniami                       | [docs/permissions.md](docs/permissions.md)    |
+| `client.limits`      | Limity i quoty                                  | [docs/limits.md](docs/limits.md)              |
 
 Dodatkowe:
 - [docs/authentication.md](docs/authentication.md) — autoryzacja i flow sesyjny
@@ -147,6 +155,7 @@ import {
   ServerError,
   ConnectionError,
   ConfigurationError,
+  SessionError,
   XsdValidationError,
 } from '@supcio/ksef-sdk';
 
@@ -157,15 +166,19 @@ try {
     // HTTP 429 — za dużo requestów
     console.log('Retry after:', error.headers['retry-after']);
   } else if (error instanceof ValidationError) {
-    // HTTP 422 — błąd walidacji (np. niepoprawny XML)
+    // HTTP 400 / 422 — błąd walidacji (np. niepoprawny XML faktury)
     console.log('Kod błędu KSeF:', error.code);
   } else if (error instanceof AuthenticationError) {
-    // HTTP 401 — problem z sesją/autoryzacją
+    // HTTP 401 — sesja wygasła lub jest nieprawidłowa (lokalna sesja została wyczyszczona)
+  } else if (error instanceof SessionError) {
+    // Brak aktywnej sesji lub nieudana inicjalizacja sesji
   } else if (error instanceof XsdValidationError) {
     // Lokalna walidacja XSD (jeśli włączona)
     console.log('Błędy:', error.details);
   } else if (error instanceof ConnectionError) {
-    // Timeout lub błąd sieciowy
+    // Timeout, błąd sieciowy lub przerwanie przez AbortSignal
+  } else if (error instanceof ConfigurationError) {
+    // Błąd konfiguracji lub środowiska (certyfikat, openssl, xmllint, schemat XSD)
   } else if (error instanceof KsefApiError) {
     // Inny błąd HTTP od KSeF
     console.log('Status:', error.status);
@@ -201,21 +214,32 @@ try {
 }
 ```
 
-Wymaga `xmllint` (libxml2) w PATH. Szczegóły: [docs/validation.md](docs/validation.md)
+Wymaga `xmllint` (libxml2) w PATH. Brak `xmllint` lub niedostępny plik XSD kończy się `ConfigurationError`, a nie cichym pominięciem walidacji. Szczegóły: [docs/validation.md](docs/validation.md)
 
 ## Automatyczny retry
 
-Biblioteka automatycznie ponawia requesty w przypadku:
+Biblioteka ponawia requesty z exponential backoff (bazowe opóźnienie 500 ms × 2^próba, jitter ±10%, maksymalnie 30 s):
 
-- **HTTP 429** (Rate Limit) — z uwzględnieniem nagłówka `Retry-After`
-- **HTTP 5xx** (Server Error) — błędy po stronie KSeF
+- **HTTP 429** (Rate Limit) i **HTTP 503** — dla każdej metody, z uwzględnieniem nagłówka `Retry-After` (sekundy lub data HTTP, przycięte do 30 s)
+- **Pozostałe HTTP 5xx**, timeouty i błędy sieciowe — tylko dla żądań idempotentnych (`GET`, `DELETE`)
 
-Retry używa exponential backoff z jitterem:
-- Bazowe opóźnienie: 500ms × 2^attempt
-- Maksymalne opóźnienie: 30s
-- Jitter: ±10%
+Żądania `POST`/`PUT` (np. wysyłka faktury) **nie są** ponawiane po timeoucie ani po 500, bo KSeF mógł je już przetworzyć. Requesty z błędem 4xx (poza 429) nie są ponawiane. Przerwanie przez `AbortSignal` natychmiast kończy ponawianie.
 
-Requesty z błędem 4xx (poza 429) **nie są** ponawiane.
+## Anulowanie i timeouty per request
+
+Każda metoda przyjmuje `requestOptions` z własnym `timeout` i `signal`:
+
+```typescript
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 5_000);
+
+await client.invoices.status({
+  invoiceElementReferenceNumber: ref,
+  requestOptions: { timeout: 10_000, signal: controller.signal },
+});
+```
+
+Przerwanie kończy się `ConnectionError` z komunikatem `Request aborted by caller`.
 
 ## Custom HTTP client
 
@@ -227,7 +251,8 @@ import { HttpClient, HttpRequestConfig, HttpResponse } from '@supcio/ksef-sdk';
 class MyHttpClient implements HttpClient {
   async request(config: HttpRequestConfig): Promise<HttpResponse> {
     // własna implementacja
-    return { status: 200, headers: {}, body: '...' };
+    const bytes = Buffer.from('...');
+    return { status: 200, headers: {}, body: bytes.toString('utf-8'), rawBody: bytes };
   }
 }
 
@@ -238,6 +263,8 @@ const client = new KsefClientBuilder()
   .httpClient(new MyHttpClient())
   .build();
 ```
+
+`rawBody` jest opcjonalne, ale bez niego pobrania binarne (`client.exports.download()`) będą oparte na tekstowym `body`.
 
 ## Dual ESM/CJS
 
@@ -253,30 +280,23 @@ const { KsefClientBuilder, Mode } = require('@supcio/ksef-sdk');
 
 ## Rozwój (contributing)
 
+Zasady współpracy, konwencje gałęzi i lista kontrolna PR: [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ```bash
-# Instalacja zależności
+# Instalacja zależności (pnpm 10, wersja przypięta w package.json)
 pnpm install
+
+# Lint + Prettier + typecheck + testy jednostkowe
+pnpm run check
 
 # Build
 pnpm run build
 
-# Testy jednostkowe
-pnpm test
-
 # Testy integracyjne (wymagają certyfikatu testowego)
 KSEF_TEST_CERT_PATH=./cert.p12 \
 KSEF_TEST_CERT_PASS=password \
-KSEF_TEST_NIP=1234567890 \
+KSEF_TEST_NIP=1234563218 \
 pnpm run test:integration
-
-# Typecheck
-pnpm run typecheck
-
-# Lint
-pnpm run lint
-
-# Format
-pnpm run format
 ```
 
 ## Licencja

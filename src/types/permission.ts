@@ -11,10 +11,18 @@ export interface PermissionGrantParams {
 }
 
 export interface CredentialRole {
-  roleType: 'invoice_read' | 'invoice_write' | 'payment_confirmation_write'
-    | 'credentials_read' | 'credentials_manage' | 'enforcement_operations'
-    | 'self_invoicing' | 'tax_representative' | 'court_bailiff'
-    | 'subject_read_all' | 'subject_read_delivered';
+  roleType:
+    | 'invoice_read'
+    | 'invoice_write'
+    | 'payment_confirmation_write'
+    | 'credentials_read'
+    | 'credentials_manage'
+    | 'enforcement_operations'
+    | 'self_invoicing'
+    | 'tax_representative'
+    | 'court_bailiff'
+    | 'subject_read_all'
+    | 'subject_read_delivered';
   roleDescription?: string;
   startTimestamp?: string;
   endTimestamp?: string;

@@ -5,7 +5,7 @@ Biblioteka umożliwia walidację XML faktury przed wysłaniem do KSeF. Walidacja
 ## Wymagania
 
 - **xmllint** CLI (część pakietu libxml2) dostępny w PATH
-- Plik XSD schematu faktury (schemat FA(2) dostępny na stronie Ministerstwa Finansów)
+- Plik XSD schematu faktury (schematy FA(2) i FA(3) są publikowane przez Ministerstwo Finansów)
 
 ```bash
 # macOS (preinstalowany lub via Homebrew)
@@ -35,7 +35,7 @@ Walidacja odbywa się automatycznie przed każdym `client.invoices.send()`.
 ## Obsługa błędów
 
 ```typescript
-import { XsdValidationError } from '@supcio/ksef-sdk';
+import { XsdValidationError, ConfigurationError } from '@supcio/ksef-sdk';
 
 try {
   await client.invoices.send({ xml: invoiceXml });
@@ -48,9 +48,19 @@ try {
       console.log(`  Linia ${detail.line}: ${detail.message}`);
       // "Linia 5: element Kwota: Schemas validity error : ..."
     }
+  } else if (error instanceof ConfigurationError) {
+    // brak xmllint w PATH albo schemat XSD nie daje się wczytać
   }
 }
 ```
+
+| Sytuacja                                        | Błąd                 |
+| ----------------------------------------------- | -------------------- |
+| XML niezgodny ze schematem lub niepoprawny XML  | `XsdValidationError` |
+| `xmllint` nie jest zainstalowany                | `ConfigurationError` |
+| Plik XSD nie istnieje lub nie kompiluje się     | `ConfigurationError` |
+
+Brak `xmllint` **nigdy** nie jest traktowany jako pomyślna walidacja.
 
 ## Standalone (bez klienta)
 
@@ -71,13 +81,7 @@ try {
 
 ## Skąd wziąć schemat XSD?
 
-Oficjalne schematy KSeF (w tym FA(2)) są publikowane przez Ministerstwo Finansów na stronie:
-
-- Środowisko testowe: https://ksef-test.mf.gov.pl/
-- Środowisko demo: https://ksef-demo.mf.gov.pl/
-- Produkcja: https://ksef.mf.gov.pl/
-
-Schematy znajdziesz w sekcji dokumentacji API / zasoby XSD.
+Oficjalne schematy KSeF (FA(2), FA(3), PEF) są publikowane przez Ministerstwo Finansów w repozytorium [CIRFMF/ksef-api](https://github.com/CIRFMF/ksef-api/tree/main/faktury/schemy) oraz na stronach środowisk KSeF. Na środowiskach DEMO i produkcyjnym API 2.0 obowiązuje schemat FA(3).
 
 ## Typy
 
@@ -96,5 +100,5 @@ class XsdValidationError extends KsefError {
 
 - Walidacja jest **opcjonalna** — domyślnie wyłączona
 - Wymaga `xmllint` w PATH (analogicznie jak `openssl` do parsowania certyfikatów)
-- Walidacja odbywa się **synchronicznie** przed wysłaniem requestu HTTP
+- Walidacja odbywa się **synchronicznie** przed wysłaniem requestu HTTP, w katalogu tymczasowym usuwanym po każdym wywołaniu
 - Błędy walidacji zawierają numery linii i opisy z xmllint

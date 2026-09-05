@@ -4,17 +4,18 @@
 
 ```
 Error (native)
-└── KsefError (bazowy)
+└── KsefError (bazowy, opcjonalne `cause`)
     ├── KsefApiError (błędy HTTP od KSeF)
+    │   ├── ValidationError         (400, 422)
     │   ├── AuthenticationError     (401)
     │   ├── PermissionDeniedError   (403)
     │   ├── NotFoundError           (404)
-    │   ├── ValidationError         (422)
     │   ├── RateLimitError          (429)
     │   └── ServerError             (5xx)
     ├── XsdValidationError (lokalna walidacja XSD)
-    ├── ConnectionError (timeout, sieć)
-    └── ConfigurationError (błąd konfiguracji buildera)
+    ├── ConnectionError (timeout, sieć, przerwanie, wyczerpane ponowienia)
+    ├── ConfigurationError (konfiguracja buildera, certyfikat, openssl, xmllint, schemat XSD)
+    └── SessionError (brak aktywnej sesji, nieudana inicjalizacja sesji)
 ```
 
 ## Użycie
@@ -31,6 +32,7 @@ import {
   ServerError,
   ConnectionError,
   ConfigurationError,
+  SessionError,
   XsdValidationError,
 } from '@supcio/ksef-sdk';
 ```
@@ -42,22 +44,24 @@ try {
   await client.invoices.send({ xml: invoiceXml });
 } catch (error) {
   if (error instanceof ValidationError) {
-    // 422 — np. niepoprawny XML faktury
+    // 400 / 422 — np. niepoprawny XML faktury
     console.log('Kod błędu KSeF:', error.code);
     console.log('Wiadomość:', error.message);
   } else if (error instanceof RateLimitError) {
     // 429 — przekroczony limit requestów
     console.log('Retry-After:', error.headers['retry-after']);
   } else if (error instanceof AuthenticationError) {
-    // 401 — sesja wygasła lub nieprawidłowa
+    // 401 — sesja wygasła lub nieprawidłowa; lokalna sesja została wyczyszczona
   } else if (error instanceof PermissionDeniedError) {
     // 403 — brak uprawnień
   } else if (error instanceof NotFoundError) {
     // 404 — zasób nie istnieje
   } else if (error instanceof ServerError) {
     // 5xx — błąd po stronie KSeF
+  } else if (error instanceof SessionError) {
+    // Brak aktywnej sesji — wywołaj client.sessions.init()
   } else if (error instanceof ConnectionError) {
-    // Timeout lub błąd sieciowy
+    // Timeout, błąd sieciowy lub przerwanie
     console.log('Przyczyna:', error.cause);
   }
 }
@@ -81,22 +85,25 @@ try {
 
 ## KsefApiError — właściwości
 
-| Właściwość  | Typ                          | Opis                                       |
-| ----------- | ---------------------------- | ------------------------------------------ |
-| `status`    | `number`                     | Kod HTTP (401, 403, 404, 422, 429, 5xx)    |
-| `code`      | `string \| null`             | Kod wyjątku KSeF (z `exceptionCode`)       |
-| `requestId` | `string \| null`             | Numer referencyjny z odpowiedzi            |
-| `headers`   | `Record<string, string>`     | Nagłówki odpowiedzi HTTP                   |
-| `message`   | `string`                     | Opis błędu                                 |
+| Właściwość  | Typ                          | Opis                                         |
+| ----------- | ---------------------------- | -------------------------------------------- |
+| `status`    | `number`                     | Kod HTTP (400, 401, 403, 404, 422, 429, 5xx) |
+| `code`      | `string \| null`             | Kod wyjątku KSeF (z `exceptionCode`)         |
+| `requestId` | `string \| null`             | Numer referencyjny z odpowiedzi              |
+| `headers`   | `Record<string, string>`     | Nagłówki odpowiedzi HTTP                     |
+| `message`   | `string`                     | Opis błędu                                   |
+
+## ValidationError
+
+KSeF zgłasza błędy walidacji faktury i requestu jako HTTP **400** z listą `exception.exceptionDetailList`; niektóre endpointy używają też 422. Oba kody mapują się na `ValidationError`, więc jeden blok `instanceof ValidationError` obsługuje wszystkie przypadki.
 
 ## ConnectionError
 
 Rzucany gdy:
-- Request przekroczy timeout (domyślnie 30s)
-- Serwer jest nieosiągalny (ECONNREFUSED)
-- Błąd DNS
-- Inne problemy sieciowe
-- Wyczerpane ponowienia (retry)
+- Request przekroczy timeout (domyślnie 30s) — `Request timed out after Nms`
+- Wywołujący przerwie request przez `AbortSignal` — `Request aborted by caller`
+- Serwer jest nieosiągalny (ECONNREFUSED), błąd DNS, inne problemy sieciowe — `Network error: ... (KOD)`
+- Wyczerpane ponowienia (retry) — `Request failed after N attempts: ...`
 
 ```typescript
 if (error instanceof ConnectionError) {
@@ -107,7 +114,7 @@ if (error instanceof ConnectionError) {
 
 ## XsdValidationError
 
-Rzucany gdy walidacja XSD jest włączona i XML faktury nie jest zgodny ze schematem:
+Rzucany gdy walidacja XSD jest włączona i XML faktury nie jest zgodny ze schematem (albo nie jest poprawnym XML-em):
 
 ```typescript
 if (error instanceof XsdValidationError) {
@@ -127,11 +134,12 @@ Szczegóły: [validation.md](validation.md)
 
 ## ConfigurationError
 
-Rzucany przez `KsefClientBuilder.build()` gdy:
-- Nie ustawiono trybu (`mode`)
-- Nie podano certyfikatu
-- Nie podano identyfikatora (NIP)
-- NIP jest nieprawidłowy (błędna suma kontrolna)
+Rzucany gdy problem leży po stronie konfiguracji lub środowiska, a nie KSeF:
+- `KsefClientBuilder.build()`: brak trybu, certyfikatu lub NIP-u, błędna suma kontrolna NIP-u, ujemny `maxRetries`, niedodatni `timeout`, włączona walidacja bez `xsdSchemaPath`
+- `certificatePath()`: plik certyfikatu nie daje się odczytać
+- Parsowanie PKCS#12: brak `openssl` w PATH, złe hasło, nieobsługiwany format
+- Walidacja XSD: brak `xmllint` w PATH, schemat XSD nie daje się wczytać
+- Podpis XAdES: klucz inny niż RSA, dokument bez elementu głównego
 
 ```typescript
 try {
@@ -142,6 +150,12 @@ try {
   }
 }
 ```
+
+## SessionError
+
+Rzucany gdy:
+- Operacja wymagająca sesji jest wywołana bez aktywnej sesji (przed `init()` lub po `terminate()` / `401`)
+- `sessions.init()` nie powiodło się: KSeF odrzucił inicjalizację, nie zwrócił tokena albo polling przekroczył limit prób
 
 ## Format wyjątków KSeF
 
@@ -160,16 +174,15 @@ KSeF zwraca błędy w formacie:
 }
 ```
 
-Biblioteka automatycznie parsuje ten format i ustawia `code` oraz `message` na `KsefApiError`.
+Biblioteka automatycznie parsuje ten format i ustawia `code` oraz `message` na `KsefApiError`. Odpowiedź 2xx z pustym body zwraca `undefined`, a 2xx z body niebędącym JSON-em (np. strona HTML z proxy) kończy się `KsefError` z opisem endpointu.
 
 ## Retry a błędy
 
 Automatycznie ponawiane:
-- `RateLimitError` (429) — z `Retry-After` jeśli dostępny
-- `ServerError` (5xx) — exponential backoff
+- `RateLimitError` (429) i HTTP 503 — dla każdej metody, z `Retry-After` jeśli dostępny (przycięty do 30 s)
+- Pozostałe `ServerError` (5xx), timeouty i błędy sieciowe — tylko dla `GET` i `DELETE`
 
 **Nie** ponawiane:
-- `AuthenticationError` (401)
-- `PermissionDeniedError` (403)
-- `NotFoundError` (404)
-- `ValidationError` (422)
+- `AuthenticationError` (401), `PermissionDeniedError` (403), `NotFoundError` (404), `ValidationError` (400/422)
+- `POST`/`PUT` po timeoucie lub 500 — request mógł już zostać przetworzony przez KSeF
+- Cokolwiek po przerwaniu przez `AbortSignal`

@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { generateKeyPairSync, createPrivateKey } from 'node:crypto';
+import { generateKeyPairSync } from 'node:crypto';
 import { encryptToken } from '../../../src/utils/encryption.js';
 
 describe('encryptToken', () => {
   it('encrypts a token with RSA-OAEP', () => {
-    const { publicKey, privateKey } = generateKeyPairSync('rsa', {
+    const { publicKey } = generateKeyPairSync('rsa', {
       modulusLength: 2048,
       publicKeyEncoding: { type: 'spki', format: 'pem' },
       privateKeyEncoding: { type: 'pkcs8', format: 'pem' },

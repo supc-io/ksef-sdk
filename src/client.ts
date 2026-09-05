@@ -24,14 +24,11 @@ export class KsefClient {
 
   private readonly sessionManager: SessionManager;
 
-  constructor(
-    httpClient: HttpClient,
-    config: ClientConfig,
-  ) {
+  constructor(httpClient: HttpClient, config: ClientConfig) {
     this.sessionManager = new SessionManager();
 
     this.auth = new AuthResource(httpClient, config, this.sessionManager);
-    this.sessions = new SessionsResource(httpClient, config, this.sessionManager);
+    this.sessions = new SessionsResource(httpClient, config, this.sessionManager, this.auth);
     this.batch = new BatchResource(httpClient, config, this.sessionManager);
     this.invoices = new InvoicesResource(httpClient, config, this.sessionManager);
     this.upo = new UpoResource(httpClient, config, this.sessionManager);

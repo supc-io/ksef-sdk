@@ -31,23 +31,24 @@ export class ExportsResource extends BaseResource {
   async status(params: ExportStatusParams): Promise<ExportStatusResult> {
     return this.requestJson<ExportStatusResult>(
       'GET',
-      `/online/Query/Invoice/Async/Status/${params.referenceNumber}`,
+      `/online/Query/Invoice/Async/Status/${encodeURIComponent(params.referenceNumber)}`,
       { requestOptions: params.requestOptions },
     );
   }
 
   /**
    * Downloads a specific part of a completed export.
+   * Export parts are binary (encrypted ZIP archives), so the raw bytes are returned.
    */
-  async download(params: ExportDownloadParams): Promise<string> {
+  async download(params: ExportDownloadParams): Promise<Buffer> {
     const response = await this.requestRaw(
       'GET',
-      `/online/Query/Invoice/Async/Fetch/${params.referenceNumber}/${params.partReferenceNumber}`,
+      `/online/Query/Invoice/Async/Fetch/${encodeURIComponent(params.referenceNumber)}/${encodeURIComponent(params.partReferenceNumber)}`,
       {
         headers: { Accept: 'application/octet-stream' },
         requestOptions: params.requestOptions,
       },
     );
-    return response.body;
+    return response.rawBody ?? Buffer.from(response.body, 'utf-8');
   }
 }
